@@ -1,0 +1,10 @@
+{
+	"compilerOptions": {
+		"strict": false,
+		"incremental": true,
+		"tsBuildInfoFile": "./build.tsbuildinfo"
+	},
+	"files": [
+		"missing.ts"
+	]
+}

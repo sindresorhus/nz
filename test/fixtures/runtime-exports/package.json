@@ -1,0 +1,14 @@
+{
+	"name": "runtime-exports",
+	"type": "module",
+	"exports": {
+		".": {
+			"types": "./index.d.ts",
+			"default": "./index.js"
+		},
+		"./star": {
+			"types": "./star.d.ts",
+			"default": "./star.js"
+		}
+	}
+}

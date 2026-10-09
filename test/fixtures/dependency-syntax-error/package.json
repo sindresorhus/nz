@@ -1,0 +1,10 @@
+{
+	"type": "module",
+	"exports": {
+		"types": "./index.d.ts",
+		"default": "./index.js"
+	},
+	"dependencies": {
+		"broken-dependency": "1.0.0"
+	}
+}

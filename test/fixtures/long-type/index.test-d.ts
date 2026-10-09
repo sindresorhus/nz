@@ -1,0 +1,3 @@
+declare const value: {property1: string; property2: string; property3: string; property4: string; property5: string; property6: string; property7: string; property8: string; property9: string; property10: string; property11: string; property12: string; property13: string; property14: string; property15: string; property16: string; property17: string; property18: string; property19: string; property20: string; property21: string; property22: string; property23: string; property24: string; property25: string; property26: string; property27: string; property28: string; property29: string; property30: string};
+
+const count: number = value;

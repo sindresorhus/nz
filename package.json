@@ -1,0 +1,47 @@
+{
+	"name": "nz",
+	"version": "0.0.1",
+	"description": "Zero-config type tests for packages with hand-written declaration files",
+	"license": "MIT",
+	"repository": "sindresorhus/nz",
+	"funding": "https://github.com/sponsors/sindresorhus",
+	"author": "Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)",
+	"type": "module",
+	"exports": {
+		"types": "./source/index.d.ts",
+		"default": "./source/index.js"
+	},
+	"bin": "./source/cli.js",
+	"sideEffects": false,
+	"engines": {
+		"node": ">=22.20"
+	},
+	"scripts": {
+		"test": "xo && node source/cli.js && node --test 'test/[!_]*.js'"
+	},
+	"files": [
+		"source",
+		"!source/index.test-d.ts"
+	],
+	"keywords": [
+		"typescript",
+		"types",
+		"type",
+		"test",
+		"assert",
+		"assertion",
+		"expect",
+		"expect-type",
+		"tsd",
+		"tsc",
+		"declaration",
+		"d.ts",
+		"cli"
+	],
+	"devDependencies": {
+		"@types/node": "^26.6.3",
+		"@typescript/native": "npm:typescript@^7.0.2",
+		"typescript": "^6.0.3",
+		"xo": "^5.0.1"
+	}
+}

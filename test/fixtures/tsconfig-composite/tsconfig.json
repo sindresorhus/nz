@@ -1,0 +1,12 @@
+{
+	"compilerOptions": {
+		"strict": true,
+		"composite": true,
+		"emitDeclarationOnly": true,
+		"declarationMap": true,
+		"mapRoot": "./maps",
+		"isolatedDeclarations": true,
+		"declarationDir": "./dist/types",
+		"outDir": "./dist"
+	}
+}

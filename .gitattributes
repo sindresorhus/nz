@@ -1,0 +1,2 @@
+* text=auto eol=lf
+test/fixtures/crlf-line-continuation/index.test-d.ts eol=crlf

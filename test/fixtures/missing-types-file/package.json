@@ -1,0 +1,4 @@
+{
+	"type": "module",
+	"types": "./missing.d.ts"
+}

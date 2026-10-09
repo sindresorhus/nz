@@ -1,0 +1,52 @@
+{
+	"name": "package-json-checks",
+	"type": "module",
+	"exports": {
+		".": {
+			"default": "./index.js",
+			"types": "./index.d.ts"
+		},
+		"./dual": {
+			"types": "./dual.d.ts",
+			"import": "./dual.js",
+			"require": "./dual.cjs"
+		},
+		"./split": {
+			"import": {
+				"types": "./split.d.ts",
+				"default": "./split.js"
+			},
+			"require": {
+				"types": "./split.d.cts",
+				"default": "./split.cjs"
+			}
+		},
+		"./nested": {
+			"import": {
+				"types": "./nested.d.ts",
+				"default": "./nested.js"
+			},
+			"types": "./nested.d.cts",
+			"default": "./nested.cjs"
+		},
+		"./nested-mismatch": {
+			"import": {
+				"types": "./nested-mismatch.d.cts",
+				"default": "./nested-mismatch.js"
+			}
+		},
+		"./node-first": {
+			"node": "./node-first.js",
+			"types": "./node-first.d.ts"
+		}
+	},
+	"files": [
+		"index.js",
+		"index.d.ts",
+		"dual.*",
+		"split.*",
+		"nested*",
+		"node-first*",
+		"!split.d.cts"
+	]
+}

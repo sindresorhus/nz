@@ -1,0 +1,1 @@
+import {expectError} from '../expect-error.js'; import {greet} from './index.js';  // A line comment ends at a line separator, not only at a line feed.  expectError(greet(1)); expectError(greet(2)); 

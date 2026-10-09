@@ -1,0 +1,13 @@
+{
+	"type": "module",
+	"exports": {
+		".": {
+			"types": "./index.d.ts",
+			"default": "./index.js"
+		},
+		"./extra": {
+			"types": "./extra.d.ts",
+			"default": "./extra.js"
+		}
+	}
+}

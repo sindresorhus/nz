@@ -1,0 +1,11 @@
+{
+	"type": "module",
+	"exports": {
+		".": {
+			"types": {
+				"import": "./greet.d.ts"
+			},
+			"default": "./index.js"
+		}
+	}
+}

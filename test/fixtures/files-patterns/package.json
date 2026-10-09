@@ -1,0 +1,9 @@
+{
+	"type": "module",
+	"types": "./dist/index.d.ts",
+	"files": [
+		"dist/*",
+		"/types",
+		"l*"
+	]
+}

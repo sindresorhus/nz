@@ -1,0 +1,15 @@
+{
+	"name": "undeclared-dependency",
+	"type": "module",
+	"exports": {
+		"types": "./index.d.ts",
+		"default": "./index.js"
+	},
+	"dependencies": {
+		"declared": "1.0.0",
+		"@types/typed": "1.0.0"
+	},
+	"devDependencies": {
+		"dev-only": "1.0.0"
+	}
+}
