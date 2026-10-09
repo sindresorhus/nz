@@ -1,6 +1,6 @@
 {
 	"name": "nz",
-	"version": "0.0.1",
+	"version": "0.1.0",
 	"description": "Zero-config type tests for packages with hand-written declaration files",
 	"license": "MIT",
 	"repository": "sindresorhus/nz",
