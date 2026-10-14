@@ -43,8 +43,11 @@ type ToBe<Actual, Expected> = IsIdentical<Actual, Expected> extends true ? unkno
 
 type NotToBe<Actual, Expected> = IsIdentical<Actual, Expected> extends true ? ActualTypeIsIdentical<Actual> : unknown;
 
-// `any` and `never` are assignable to almost everything, which is how an accidental one passes unnoticed, so here they are only assignable to themselves. Identical types come first, because TypeScript can tell that also for a type parameter, like `this` in a class, where it cannot tell whether the type is `any` or `never`.
-type IsAssignable<Actual, Expected> = IsEqual<Actual, Expected> extends true ? true : IsAnyOrNever<Actual> extends true ? false : [Actual] extends [Expected] ? true : false;
+// `any` and `never` are assignable to almost everything, which is how an accidental one passes unnoticed, so here they are only assignable to themselves. Identical types come first, because TypeScript can tell that also for a type parameter, like `this` in a class, where it cannot tell whether the type is `any` or `never`. Equality still needs an assignability check, because it does not distinguish abstract constructors from concrete ones. Comparing return types lets TypeScript resolve the check for identical type parameters too.
+type IsAssignable<Actual, Expected> =
+	IsEqual<Actual, Expected> extends true
+		? (() => Actual) extends (() => Expected) ? true : false
+		: IsAnyOrNever<Actual> extends true ? false : [Actual] extends [Expected] ? true : false;
 
 type ToBeAssignableTo<Actual, Expected> = IsAssignable<Actual, Expected> extends true ? unknown : ActualTypeIsNotAssignable<Actual>;
 

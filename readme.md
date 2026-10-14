@@ -253,7 +253,7 @@ TypeScript 6 runs in Node.js, and the compiler gets a heap of 8 GB instead of th
 
 **`expectTypeOf()`**
 
-- Two structurally identical types are identical, also different classes. An intersection is not identical to the type it flattens into, an enum is not identical to the union of its members, and `new () => T` is identical to `abstract new () => T`.
+- Two structurally identical types are identical, also different classes. An intersection is not identical to the type it flattens into, an enum is not identical to the union of its members, and `new () => T` is identical to `abstract new () => T`, although `toBeAssignableTo()` does not accept the abstract one for the other.
 - A `this` parameter that only one side has is only compared for the function itself, not for a function inside the type, like in a property, a method, a parameter, or a return type, nor in a union that also has a function without a `this` parameter. For an overloaded function, it is only compared for the last overload. A `this` parameter of type `unknown`, or of a type parameter of a generic function, is the same as none.
 - For an overloaded function, `returns` and `parameters` are those of the last overload. For a generic function, its type parameters are `unknown`, and for a union, `returns` follows TypeScript's `ReturnType`. To test another overload, call the function, like `expectTypeOf(convert(1)).toBe<string>()`, and give a generic function its type arguments, like `expectTypeOf(identity<string>).returns.toBe<string>()`.
 - A fresh literal widens, so `expectTypeOf('hello')` is a `string`. Declare the value with a literal type first.
