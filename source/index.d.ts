@@ -216,7 +216,7 @@ Assert that `value` causes a type error.
 
 It passes when there is at least one type error in its type argument or inside its parentheses, and fails with `Expected an error, but found none.` otherwise. Any error code counts, except an error for a name that does not exist, which is a typo in the test. When a syntax error or an error in the compiler options made `tsc` skip the type check, no error counts.
 
-With a `message`, only an error whose message includes it passes the assertion, so a test cannot pass because of a different error. An error inside the call that does not include it is reported, so the failure shows what the error was. The message has to be one string literal, because it is read from the source. Anything else, like a variable, is not read, and the call then takes any error.
+With a `message`, only an error whose message includes it passes the assertion, so a test cannot pass because of a different error. An error inside the call that does not include it is reported, so the failure shows what the error was. The message has to be one string literal, because it is read from the source. Anything else, like a variable, is not read, and the call then takes any error. Control characters in an unmatched message are displayed as visible `\uXXXX` escapes.
 
 This needs the `nz` CLI, which matches type errors to the `expectError()` calls. The calls are found by name, so the `expectError` from `tsd` works too. With plain `tsc`, every type error fails, so use a `// @ts-expect-error` comment instead.
 

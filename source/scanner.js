@@ -1,16 +1,16 @@
-const identifierPattern = /[\w$]+/vy;
+const identifierPattern = /[\p{ID_Continue}$\u{200C}\u{200D}]+/vy;
 
 // A `/` after one of these characters starts a regex literal, not a division.
-const regexPrecedingCharacters = new Set('(,=:[!&|?{};+-*%<>~^');
+const regexPrecedingCharacters = new Set('(,=:[!&|?{};+-*/%<>~^');
 
-// The single characters TypeScript counts as the end of a line. A comment, a string literal and a regex literal all end at one of them.
+// The single characters TypeScript counts as the end of a line. A line comment and a regex literal end at any of them.
 const lineBreaks = new Set(['\n', '\r', '\u{2028}', '\u{2029}']);
 
 // The same, with `\r\n` as one break, for `lineStartOffsets()`, which matches a break rather than test a character.
 const lineBreakPattern = /\r\n|[\n\r\u{2028}\u{2029}]/gv;
 
 // A `/` after one of these keywords starts a regex literal, not a division, because each of them has to be followed by an expression. `of` is not in here, because it is only a keyword in a `for…of` head and a normal name everywhere else. `split(' ')` is needed because a `Set` from a string takes single characters.
-const regexPrecedingKeywords = new Set('await case default delete do else in instanceof return throw typeof void yield'.split(' '));
+const regexPrecedingKeywords = new Set('await case default delete do else in instanceof new return throw typeof void yield'.split(' '));
 
 // The keywords whose `(…)` head is followed by a statement, so a `/` after the `)` starts a regex literal, not a division.
 const controlKeywords = new Set(['if', 'while', 'for', 'with']);
@@ -20,6 +20,8 @@ const expressionEndCharacters = new Set('")]}a');
 
 /*
 What `previous` becomes after an identifier, so that `skipLiteral()` can tell a regex from a division. A keyword after `.` or `#` is a property name, and a `/` after that is a division.
+
+The preserved `new` token also identifies a constructor target, rather than a function call.
 
 `function` is kept too, so that `scanSource()` can tell a declaration from a call, and so are the `controlKeywords`, so that it can find the end of their head. A `/` after any of them is a division, which is never valid there anyway.
 */
@@ -31,17 +33,17 @@ function afterIdentifier(previous, identifier) {
 /*
 What `previous` becomes after a single character, so that `skipLiteral()` can tell a regex literal from a division.
 
-A `!` after the end of an expression, and a `++` or `--`, is a postfix operator, as in `value!` or `count++`. The expression is over, so a `/` after the operator is a division. A single `+` or `-` is a binary operator, and a `/` after it is a regex. A prefix `++` is followed by an operand, so reading it as the end of an expression makes no difference. Whitespace is not tracked, so `a + +b` is read as a postfix `++` too, and a regex right after it as a division.
+A `!` after the end of an expression, and a `++` or `--`, is a postfix operator, as in `value!` or `count++`. The expression is over, so a `/` after the operator is a division. A single `+` or `-` is a binary or unary operator, and a `/` after it is a regex. A prefix `++` is followed by an operand, so reading it as the end of an expression makes no difference. The characters of `++` and `--` must be adjacent; whitespace or a comment separates two operators.
 */
-function afterCharacter(previous, character) {
+function afterCharacter(previous, character, previousCharacter) {
 	const isPostfix = (character === '!' && expressionEndCharacters.has(previous))
-		|| (character === previous && (character === '+' || character === '-'));
+		|| (character === previous && character === previousCharacter && (character === '+' || character === '-'));
 
 	return isPostfix ? 'a' : character;
 }
 
 /*
-Returns the type argument that starts at `offset`, as it is written in the test, with its whitespace collapsed and its string literals in double quotes, like TypeScript prints a type. Returns `undefined` when there is no type argument there.
+Returns the type argument that starts at `offset`, as it is written in the test, with its whitespace outside literals collapsed and its string literals in double quotes, like TypeScript prints a type. Returns `undefined` when there is no type argument there.
 
 TypeScript widens a literal type in a failure message, like `'a'` to `string`, so the written type is the one to show.
 */
@@ -62,11 +64,16 @@ export function readTypeArgument(source, offset) {
 
 	for (let index = start + 1; index < end - 1;) {
 		const token = readToken(source, index, previous);
+		// The walk does not track control heads like `findClosing()`, so it can read a literal that does not end where `findClosing()` read a regex.
+		if (token.end === -1) {
+			return undefined;
+		}
+
 		const text = source.slice(index, token.end);
 		const value = decodeStringLiteral(text);
 
 		if (isComment(source, index) || /^\s/v.test(text)) {
-			writtenType += ' ';
+			writtenType += writtenType.endsWith(' ') ? '' : ' ';
 		} else {
 			writtenType += value === undefined ? text : JSON.stringify(value);
 		}
@@ -75,7 +82,7 @@ export function readTypeArgument(source, offset) {
 		previous = token.previous;
 	}
 
-	return writtenType.trim().replaceAll(/\s+/gv, ' ');
+	return writtenType.trim();
 }
 
 export function lineStartOffsets(source) {
@@ -100,7 +107,8 @@ function skipString(source, index) {
 			return position + 1;
 		}
 
-		if (lineBreaks.has(character)) {
+		// Quoted strings allow raw U+2028 and U+2029 since ECMAScript's JSON superset change.
+		if (character === '\n' || character === '\r') {
 			return -1;
 		}
 
@@ -201,7 +209,7 @@ function isComment(source, index) {
 }
 
 /*
-Reads the token that starts at `index`: an identifier, a comment, a string, a template literal, a regex literal, or a single character.
+Reads the token that starts at `index`: an identifier, a comment, a string, a template literal, a regex literal, a spread operator, or a single character.
 
 Returns the index after it (`-1` if it does not end), the identifier if it is one, and what `previous` becomes after it.
 */
@@ -218,8 +226,13 @@ function readToken(source, index, previous) {
 		return {end, previous: isComment(source, index) ? previous : '"'};
 	}
 
+	// Spread starts an expression, like `=`, and its dots are never property access.
+	if (source.startsWith('...', index)) {
+		return {end: index + 3, previous: '='};
+	}
+
 	const character = source[index];
-	return {end: index + 1, previous: /\s/v.test(character) ? previous : afterCharacter(previous, character)};
+	return {end: index + 1, previous: /\s/v.test(character) ? previous : afterCharacter(previous, character, source[index - 1])};
 }
 
 // Returns the index after the `close` character that balances the `open` character at `index`, or `-1`.
@@ -229,6 +242,17 @@ function findClosing(source, index, open, close) {
 
 	for (let position = index; position < source.length;) {
 		const character = source[position];
+
+		// A control head is followed by a statement, so a regex after its closing parenthesis is not a division.
+		if (character === '(' && controlKeywords.has(previous)) {
+			position = findClosing(source, position, '(', ')');
+			if (position === -1) {
+				return -1;
+			}
+
+			previous = ';';
+			continue;
+		}
 
 		// The `>` in an arrow function type is not a closing angle bracket.
 		const isArrow = character === '>' && source[position - 1] === '=';
@@ -282,6 +306,17 @@ Both are needed. The end is where the range a diagnostic has to be in ends, and 
 function findParentheses(source, index) {
 	let position = skipWhitespaceAndComments(source, index);
 
+	while (source[position] === '!' || source.startsWith('?.', position)) {
+		// A postfix non-null assertion cannot cross a line break, unlike an optional call.
+		// eslint-disable-next-line unicorn/prefer-regexp-test -- The shared global pattern must not change lastIndex.
+		if (source[position] === '!' && source.slice(index, position).search(lineBreakPattern) !== -1) {
+			return -1;
+		}
+
+		index = position + (source[position] === '!' ? 1 : 2);
+		position = skipWhitespaceAndComments(source, index);
+	}
+
 	if (source[position] === '<') {
 		position = findClosing(source, position, '<', '>');
 		if (position === -1) {
@@ -289,6 +324,10 @@ function findParentheses(source, index) {
 		}
 
 		position = skipWhitespaceAndComments(source, position);
+		// Type arguments can precede an optional call, but a following `!` starts a relational expression.
+		if (source.startsWith('?.', position)) {
+			position = skipWhitespaceAndComments(source, position + 2);
+		}
 	}
 
 	if (source[position] !== '(') {
@@ -330,7 +369,6 @@ Returns the message of an `expectError` call, whose parentheses start at `start`
 function readMessage(source, start, end) {
 	// The tokens outside brackets, split at the commas.
 	const arguments_ = [[]];
-	let depth = 0;
 	let previous = '';
 
 	for (let index = start + 1; index < end - 1;) {
@@ -341,12 +379,21 @@ function readMessage(source, start, end) {
 
 		const character = source[index];
 		if ('([{'.includes(character)) {
-			depth++;
-		} else if (')]}'.includes(character)) {
-			depth--;
-		} else if (depth === 0 && character === ',') {
+			// Keep a token for the group, so a string followed by an index or a call is not read as a lone literal.
+			arguments_.at(-1).push(character);
+			const closingCharacter = ')]}'['([{'.indexOf(character)];
+			index = findClosing(source, index, character, closingCharacter);
+			if (index === -1) {
+				return undefined;
+			}
+
+			previous = closingCharacter;
+			continue;
+		}
+
+		if (character === ',') {
 			arguments_.push([]);
-		} else if (depth === 0 && !/\s/v.test(character) && !isComment(source, index)) {
+		} else if (!/\s/v.test(character) && !isComment(source, index)) {
 			arguments_.at(-1).push(source.slice(index, token.end));
 		}
 
@@ -426,11 +473,13 @@ export function scanSource(source, callNames) {
 
 		const isString = source[index] === '\'' || source[index] === '"';
 		if (isString && isSpecifierPosition(recentTokens)) {
-			imports.push({start: index, specifier: source.slice(index + 1, token.end - 1)});
+			imports.push({start: index, specifier: decodeStringLiteral(source.slice(index, token.end))});
 		}
 
 		if (!isCommentToken && !/\s/v.test(source[index])) {
-			recentTokens = [recentTokens.at(-1), token.identifier ?? source[index]];
+			// Member names do not make a following string a module specifier.
+			const significantToken = token.identifier && (previous === '.' || previous === '#') ? 'a' : token.identifier ?? source[index];
+			recentTokens = [recentTokens.at(-1), significantToken];
 			hasStatement = true;
 		}
 
@@ -441,8 +490,8 @@ export function scanSource(source, callNames) {
 			}
 		}
 
-		// Skip property access (`tsd.expectError`), a private field (`this.#expectError`), and declarations (`function expectError`).
-		if (previous !== '.' && previous !== '#' && previous !== 'function' && callNames.has(token.identifier)) {
+		// Skip property access (`tsd.expectError`), a private field (`this.#expectError`), declarations (`function expectError`), and constructor targets (`new expectError`).
+		if (previous !== '.' && previous !== '#' && previous !== 'function' && previous !== 'new' && callNames.has(token.identifier)) {
 			const parentheses = findParentheses(source, token.end);
 			// A `{` after the arguments is a method body, and a `:` is a return type, so the name is a method or a method signature and not a call. Where an expression starts, a `:` is the rest of a conditional, like in `condition ? expectError(value) : other`, or of a `case`.
 			if (parentheses !== -1 && (isExpressionStart(previous) || !'{:'.includes(source[skipWhitespaceAndComments(source, parentheses.end)]))) {
@@ -453,9 +502,7 @@ export function scanSource(source, callNames) {
 					end: parentheses.end,
 					message: readMessage(source, parentheses.start, parentheses.end),
 				});
-				previous = ')';
-				index = parentheses.end;
-				continue;
+				// Keep scanning the arguments, which can contain assertions and suppression directives of their own.
 			}
 		}
 

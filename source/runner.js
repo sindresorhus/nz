@@ -420,6 +420,11 @@ function parseDiagnostics(output) {
 	return diagnostics;
 }
 
+// Keep terminal controls visible in the tool's own assertion descriptions.
+function escapeControlCharacters(message) {
+	return message.replaceAll(/\p{Control}/gv, character => String.raw`\u${character.codePointAt(0).toString(16).padStart(4, '0')}`);
+}
+
 /*
 Describes a failed `expectTypeOf()` assertion in one line, the same on TypeScript 6 and 7, or returns the message as is when it is not one. `writtenType` is the expected type as the test has it, if the failure is at a type argument.
 
@@ -444,7 +449,8 @@ function describeAssertionFailure(message, writtenType) {
 		ActualTypeIsAssignable: `Expected a type not assignable to ${expected}, but the actual type is '${actual}'.`,
 	};
 
-	return descriptions[marker] ?? message;
+	const description = descriptions[marker];
+	return description === undefined ? message : escapeControlCharacters(description);
 }
 
 function isOwnFile(root, file) {
@@ -460,7 +466,7 @@ function isOwnFile(root, file) {
 
 // The failure of an `expectError` call that no error satisfied.
 function describeUnmatchedCall({message}) {
-	return message === undefined ? 'Expected an error, but found none.' : `Expected an error that includes “${message}”, but found none.`;
+	return message === undefined ? 'Expected an error, but found none.' : `Expected an error that includes “${escapeControlCharacters(message)}”, but found none.`;
 }
 
 // The failure of a `tsd` assertion that would pass without a trace.
@@ -721,16 +727,15 @@ export async function typeTest(options) {
 			const offset = sourceFile ? sourceFile.lineStarts[diagnostic.line - 1] + diagnostic.column - 1 : undefined;
 
 			if (sourceFile && !isMissingName) {
-				// A call passes when there is a type error after its name, in its type argument or inside its parentheses, like with `tsd`, so an error on the name itself is a failure of its own. A call with a message only takes an error that includes it, and an error that does not is a failure, so it shows what the error was.
-				const matchingCalls = sourceFile.calls.filter(call => offset >= call.nameEnd
-					&& offset < call.end
-					&& (call.message === undefined || diagnostic.message.includes(call.message)));
+				// A call passes when there is a type error after its name, in its type argument or inside its parentheses, like with `tsd`, so an error on the name itself is a failure of its own. A call with a message only takes an error that includes it, and an error that does not is a failure, so it shows what the error was. Every enclosing call must accept an error before it can be left out.
+				const containingCalls = sourceFile.calls.filter(call => offset >= call.nameEnd && offset < call.end);
+				const matchingCalls = containingCalls.filter(call => call.message === undefined || diagnostic.message.includes(call.message));
 
-				if (matchingCalls.length > 0) {
-					for (const call of matchingCalls) {
-						call.isMatched = true;
-					}
+				for (const call of matchingCalls) {
+					call.isMatched = true;
+				}
 
+				if (containingCalls.length > 0 && matchingCalls.length === containingCalls.length) {
 					continue;
 				}
 			}

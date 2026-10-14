@@ -179,7 +179,7 @@ Assert that `value` causes a type error.
 
 It passes when there is at least one type error in its type argument or inside its parentheses, and fails with `Expected an error, but found none.` otherwise. Any error code counts, except an error for a name that does not exist, which is a typo in the test. When a syntax error or an error in the compiler options made `tsc` skip the type check, no error counts.
 
-With a `message`, only an error whose message includes it passes the assertion, so a test cannot pass because of a different error. An error inside the call that does not include it is reported, so the failure shows what the error was. The message has to be one string literal, because it is read from the source. Anything else, like a variable, is not read, and the call then takes any error.
+With a `message`, only an error whose message includes it passes the assertion, so a test cannot pass because of a different error. An error inside the call that does not include it is reported, so the failure shows what the error was. The message has to be one string literal, because it is read from the source. Anything else, like a variable, is not read, and the call then takes any error. Control characters in an unmatched message are displayed as visible `\uXXXX` escapes.
 
 ```ts
 expectError(greet(1), 'not assignable to parameter of type');
@@ -189,7 +189,7 @@ This needs the `nz` CLI, which matches type errors to the `expectError()` calls.
 
 ### Failure messages
 
-The CLI describes a failed assertion in one line, the same on TypeScript 6 and 7, with the expected type as you wrote it:
+The CLI describes a failed assertion in one line, the same on TypeScript 6 and 7, with the expected type as you wrote it. Control characters in assertion descriptions are displayed as visible `\uXXXX` escapes:
 
 ```text
 index.test-d.ts:4:26  Expected type 'string', but the actual type is 'number'.
@@ -233,6 +233,7 @@ TypeScript 6 runs in Node.js, and the compiler gets a heap of 8 GB instead of th
 - No settings of its own. Put compiler options, like `exactOptionalPropertyTypes`, in your `tsconfig.json`.
 - A `tsconfig.json` replaces the whole default option set, so a package that only wants `paths` must also set `module` and `moduleResolution` to `nodenext`.
 - With a `tsconfig.json`, the options under [what it checks](#what-it-checks) are overridden, and `files`/`include` is not used.
+- Project references (`references`) are not carried over from `tsconfig.json`. An import can resolve to a referenced project's source instead of its built declarations. Import built declaration entry points when testing a referenced project.
 - Without a `tsconfig.json`, only the `@types/node` globals are available, because `types` is set. Import from the package instead.
 - A `node_modules` that cannot be written to.
 - `${configDir}` is the temporary directory in `node_modules/.cache`, not the package root, because TypeScript sets it to the config's directory. A `paths` entry that uses it does not resolve, nor does a relative `types` entry like `./typings/globals`.
