@@ -57,7 +57,8 @@ type NotToBeAssignableTo<Actual, Expected> = IsAssignable<Actual, Expected> exte
 // `any` and `never` satisfy every constraint, so for them the check is repeated on `this`, which they cannot bypass.
 type AnyOrNeverGuard<Expected, Check> = IsAnyOrNever<Expected> extends true ? Check : unknown;
 
-type ReturnTypeOf<Type> = Type extends (...arguments_: any) => infer Return ? Return : never;
+// A `never` argument list matches every call signature, including generic rest parameters constrained to `never[]`.
+type ReturnTypeOf<Type> = Type extends (...arguments_: never) => infer Return ? Return : never;
 
 type ParametersOf<Type> = Type extends (...arguments_: infer Parameters) => any ? Parameters : never;
 
@@ -111,7 +112,7 @@ export type ExpectTypeOf<Actual> = {
 	/**
 	The return type of the function.
 
-	For an overloaded function, this is the return type of the last overload. It is `unknown` for `any`, and `never` if the type is not a function.
+	For an overloaded function, this is the return type of the last overload. For a union, only its function members count. It is `unknown` for `any`, and `never` if the type is not a function.
 
 	@example
 	```
