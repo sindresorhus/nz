@@ -9,6 +9,6 @@ expectTypeOf<number>().toBe<Negated<string>>();
 expectTypeOf<number>().toBeAssignableTo<Negated<string>>();
 expectTypeOf<Negated<string>>().not.toBe<Negated<string>>();
 
-// Genuine guards still describe the supplied type when the actual type is an assertion object.
+// Genuine guards still describe the type argument when the actual type is an assertion object.
 expectTypeOf<ExpectTypeOf<string>>().toBe<any>();
 expectTypeOf<Negated<string>>().toBe<never>();

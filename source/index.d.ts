@@ -1,7 +1,7 @@
 /*
 The failure messages are the names of these types. TypeScript prints the reference as is, for example `Type 'string' does not satisfy the constraint 'ActualTypeIs<number>'`, so the message names the actual type without any string building. The names are the public wording of a failure, and runner.js reads them to describe a failure in one line. Do not rename them.
 
-The keys are symbols that are not exported, so no expected type can have the key, and satisfy the check that way.
+The keys are symbols that are not exported, so an ordinary expected type cannot construct a matching property. Public method signatures can expose these failure types, so the check is also repeated on `this` whenever the expected type satisfies the constraint.
 */
 
 declare const actualTypeIs: unique symbol;
@@ -54,8 +54,9 @@ type ToBeAssignableTo<Actual, Expected> = IsAssignable<Actual, Expected> extends
 // The check is a separate type, like `IsIdentical` in `NotToBe`, because with the failure in the true branch of `[Actual] extends [Expected]` itself, the constraint is circular and TypeScript never checks it.
 type NotToBeAssignableTo<Actual, Expected> = IsAssignable<Actual, Expected> extends true ? ActualTypeIsAssignable<Actual> : unknown;
 
-// `any` and `never` satisfy every constraint, so for them the check is repeated on `this`, which they cannot bypass.
-type AnyOrNeverGuard<Expected, Check> = IsAnyOrNever<Expected> extends true ? Check : unknown;
+// An expected type can satisfy a failed assertion's constraint, like `any`, `never`, nullable types without strictNullChecks, or an exposed failure type. Repeat that check on `this` so the expected type cannot bypass it.
+// A passing assertion has `unknown` as the check, which every expected type satisfies, so it is left out first. Comparing the expected type with it anyway takes a lot more memory in a large test file.
+type ExpectedTypeGuard<Expected, Check> = unknown extends Check ? unknown : [Expected] extends [Check] ? Check : unknown;
 
 // A `never` argument list matches every call signature, including generic rest parameters constrained to `never[]`.
 type ReturnTypeOf<Type> = Type extends (...arguments_: never) => infer Return ? Return : never;
@@ -70,7 +71,7 @@ type ThisParameterOf<Type> = Type extends (...arguments_: never) => unknown ? (T
 type ResolvedTypeOf<Type> = Type extends object & {then: (...arguments_: never) => unknown} ? Awaited<Type> : never;
 
 /*
-Named, so that a failure message names it instead of printing the whole signature, like `Negated<number>` when the check is repeated on `this` for `any` and `never`. runner.js reads the names `ExpectTypeOf` and `Negated` to tell that case apart. Do not rename them.
+Named, so that a failure message names it instead of printing the whole signature, like `Negated<number>` when the check is repeated on `this` because the expected type satisfies the constraint. runner.js reads the names `ExpectTypeOf` and `Negated` to tell that case apart. Do not rename them.
 */
 type Negated<Actual> = {
 	/**
@@ -83,7 +84,7 @@ type Negated<Actual> = {
 	expectTypeOf(greet).not.toBe<(name: number) => string>();
 	```
 	*/
-	toBe<Expected extends NotToBe<Actual, Expected>>(this: AnyOrNeverGuard<Expected, NotToBe<Actual, Expected>>): void;
+	toBe<Expected extends NotToBe<Actual, Expected>>(this: ExpectedTypeGuard<Expected, NotToBe<Actual, Expected>>): void;
 
 	/**
 	Assert that the type is not assignable to `Expected`.
@@ -95,7 +96,7 @@ type Negated<Actual> = {
 	expectTypeOf(greet).not.toBeAssignableTo<(name: number) => unknown>();
 	```
 	*/
-	toBeAssignableTo<Expected extends NotToBeAssignableTo<Actual, Expected>>(this: AnyOrNeverGuard<Expected, NotToBeAssignableTo<Actual, Expected>>): void;
+	toBeAssignableTo<Expected extends NotToBeAssignableTo<Actual, Expected>>(this: ExpectedTypeGuard<Expected, NotToBeAssignableTo<Actual, Expected>>): void;
 };
 
 export type ExpectTypeOf<Actual> = {
@@ -128,7 +129,7 @@ export type ExpectTypeOf<Actual> = {
 	/**
 	The parameter types of the function, as a tuple.
 
-	For an overloaded function, these are the parameters of the last overload. It is `unknown[]` for `any`, and `never` if the type is not a function.
+	For an overloaded function, these are the parameters of the last overload. For a union, only its function members count. It is `unknown[]` for `any`, and `never` if the type is not a function.
 
 	@example
 	```
@@ -169,7 +170,7 @@ export type ExpectTypeOf<Actual> = {
 	expectTypeOf(greet('World')).toBe<string>();
 	```
 	*/
-	toBe<Expected extends ToBe<Actual, Expected> = never>(this: AnyOrNeverGuard<Expected, ToBe<Actual, Expected>>): void;
+	toBe<Expected extends ToBe<Actual, Expected> = never>(this: ExpectedTypeGuard<Expected, ToBe<Actual, Expected>>): void;
 
 	/**
 	Assert that the type is assignable to `Expected`.
@@ -185,7 +186,7 @@ export type ExpectTypeOf<Actual> = {
 	expectTypeOf(greet).toBeAssignableTo<(name: string) => unknown>();
 	```
 	*/
-	toBeAssignableTo<Expected extends ToBeAssignableTo<Actual, Expected> = never>(this: AnyOrNeverGuard<Expected, ToBeAssignableTo<Actual, Expected>>): void;
+	toBeAssignableTo<Expected extends ToBeAssignableTo<Actual, Expected> = never>(this: ExpectedTypeGuard<Expected, ToBeAssignableTo<Actual, Expected>>): void;
 };
 
 /**

@@ -267,4 +267,4 @@ TypeScript 6 runs in Node.js, and the compiler gets a heap of 8 GB instead of th
 - Inside a generic function or class, the actual type is a type parameter, so the `not` assertions fail, and so does `toBeAssignableTo()` for a type that is not identical: TypeScript cannot resolve them.
 - Method parameters are checked bivariantly in `toBeAssignableTo()`, like in TypeScript.
 - There are no matchers for properties or specific kinds of types. Use `toBe()` with the full type.
-- A mismatch with an expected `any` or `never` is reported at the start of the expression, and the CLI says which, because TypeScript's message does not.
+- When the expected type satisfies a failed assertion's constraint, the failure is reported at the start of the expression. The CLI calls it “the type argument”, and says that it is `never` without one, because TypeScript's message does not name the expected type.

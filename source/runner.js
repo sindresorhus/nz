@@ -33,7 +33,7 @@ const testDirectories = ['test-d', 'typetests'];
 
 const diagnosticPattern = /^(?<file>.+?)\((?<line>\d+),(?<column>\d+)\): (?<message>error TS\d+: .*)$/v;
 
-// The expected type of a failed `expectTypeOf()` assertion, in each of the ways TypeScript words one: a constraint, a missing symbol property (TypeScript 7, for an object), and a `this` context (TypeScript 6, for `any` and `never`).
+// The expected type of a failed `expectTypeOf()` assertion, in each of the ways TypeScript words one: a constraint, a missing symbol property (TypeScript 7, for an object), and a `this` context (TypeScript 6, for guarded expected types).
 const expectedTypePattern = /^error TS\d+: (?:Type|Property '\[\w+\]' is missing in type|The 'this' context of type) '(?<expected>.*?)' (?:does not satisfy|but required|is not assignable)/v;
 
 // The marker type of a failed `expectTypeOf()` assertion, which holds the actual type.
@@ -447,7 +447,7 @@ function escapeControlCharacters(message) {
 /*
 Describes a failed `expectTypeOf()` assertion in one line, the same on TypeScript 6 and 7, or returns the message as is when it is not one. `writtenType` is the expected type as the test has it, if the failure is at a type argument.
 
-For `any` and `never`, the check is repeated on `this`, so the other type is the assertion object, like `ExpectTypeOf<number>`, and the expected type is one of the two.
+When the expected type satisfies the constraint, the check is repeated on `this`, so the other type is the assertion object, like `ExpectTypeOf<number>`. The diagnostic does not name the expected type, which is `never` without a type argument.
 */
 function describeAssertionFailure(message, writtenType) {
 	const firstLine = message.split('\n', 1)[0];
@@ -458,13 +458,16 @@ function describeAssertionFailure(message, writtenType) {
 	}
 
 	const {marker, actual} = markerMatch.groups;
-	const isThisGuard = /^(?:ExpectTypeOf|Negated)<.*>$/sv.test(expectedMatch.groups.expected);
-	const expected = isThisGuard ? '\'any\' or \'never\'' : `'${writtenType ?? expectedMatch.groups.expected}'`;
+	const isThisGuard = writtenType === undefined && /^(?:ExpectTypeOf|Negated)<.*>$/sv.test(expectedMatch.groups.expected);
+	const expected = isThisGuard ? 'the type argument' : `'${writtenType ?? expectedMatch.groups.expected}'`;
+	const typePrefix = isThisGuard ? '' : 'type ';
+	// Only the assertions that are not negated default the expected type to `never`. The negated ones pass without a type argument.
+	const defaultNote = isThisGuard ? ' (\'never\' without one)' : '';
 
 	const descriptions = {
-		ActualTypeIs: `Expected type ${expected}, but the actual type is '${actual}'.`,
+		ActualTypeIs: `Expected ${typePrefix}${expected}${defaultNote}, but the actual type is '${actual}'.`,
 		ActualTypeIsIdentical: `Expected a type other than ${expected}, but the actual type is identical.`,
-		ActualTypeIsNotAssignable: `Expected a type assignable to ${expected}, but the actual type is '${actual}'.`,
+		ActualTypeIsNotAssignable: `Expected a type assignable to ${expected}${defaultNote}, but the actual type is '${actual}'.`,
 		ActualTypeIsAssignable: `Expected a type not assignable to ${expected}, but the actual type is '${actual}'.`,
 	};
 

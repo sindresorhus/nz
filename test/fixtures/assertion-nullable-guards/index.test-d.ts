@@ -22,3 +22,6 @@ const anyExpectation = expectTypeOf<any>();
 const anyMethod = anyExpectation.toBe<never>;
 type AnyFailure = ThisParameterType<typeof anyMethod>;
 anyExpectation.toBe<AnyFailure>();
+
+expectTypeOf<number>().toBe();
+expectTypeOf<number>().toBeAssignableTo();

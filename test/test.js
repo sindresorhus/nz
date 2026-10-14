@@ -265,11 +265,11 @@ test('describes a failed assertion in one line, the same on TypeScript 6 and 7',
 	const expected = [
 		{line: 6, message: 'Expected type \'string\', but the actual type is \'number\'.'},
 		{line: 7, message: 'Expected type \'{name: string; age: number}\', but the actual type is \'{ name: string; }\'.'},
-		{line: 8, message: 'Expected type \'any\' or \'never\', but the actual type is \'number\'.'},
+		{line: 8, message: 'Expected the type argument (\'never\' without one), but the actual type is \'number\'.'},
 		{line: 9, message: 'Expected a type other than \'number\', but the actual type is identical.'},
 		{line: 10, message: 'Expected a type assignable to \'string\', but the actual type is \'number\'.'},
 		{line: 11, message: 'Expected a type not assignable to \'number | string\', but the actual type is \'number\'.'},
-		{line: 12, message: 'Expected a type not assignable to \'any\' or \'never\', but the actual type is \'number\'.'},
+		{line: 12, message: 'Expected a type not assignable to the type argument, but the actual type is \'number\'.'},
 		// TypeScript widens a literal in the message, so the expected type is the one written in the test.
 		{line: 14, message: 'Expected type \'"a"\', but the actual type is \'"b"\'.'},
 		{line: 16, message: 'Expected a type other than \'"b"\', but the actual type is identical.'},
@@ -291,29 +291,31 @@ test('expected assertion object types are not confused with guarded expected typ
 		{line: 8, message: 'Expected type \'Negated<string>\', but the actual type is \'number\'.'},
 		{line: 9, message: 'Expected a type assignable to \'Negated<string>\', but the actual type is \'number\'.'},
 		{line: 10, message: 'Expected a type other than \'Negated<string>\', but the actual type is identical.'},
-		{line: 13, message: 'Expected the supplied type, but the actual type is \'ExpectTypeOf<string>\'.'},
-		{line: 14, message: 'Expected the supplied type, but the actual type is \'Negated<string>\'.'},
+		{line: 13, message: 'Expected the type argument (\'never\' without one), but the actual type is \'ExpectTypeOf<string>\'.'},
+		{line: 14, message: 'Expected the type argument (\'never\' without one), but the actual type is \'Negated<string>\'.'},
 	];
 	const results = await failuresOnBothCompilers('assertion-expectation-types');
 	assert.deepEqual(results.map(result => result.map(({line, message}) => ({line, message}))), [expected, expected]);
 });
 
 test('describes a failed assertion whose expected type satisfies the constraint', async () => {
-	// Without `strictNullChecks`, `null` and `undefined` satisfy every constraint, like `any` and `never` do, and so does a failure type taken from an assertion.
+	// Without `strictNullChecks`, `null` and `undefined` satisfy every constraint, like `any` and `never` do, and so does a failure type taken from an assertion. Without a type argument, the expected type is `never`.
 	const expected = [
-		[3, 'Expected the supplied type, but the actual type is \'number\'.'],
-		[4, 'Expected the supplied type, but the actual type is \'number\'.'],
-		[5, 'Expected the supplied type, but the actual type is \'any\'.'],
-		[6, 'Expected the supplied type, but the actual type is \'never\'.'],
-		[7, 'Expected a type other than the supplied type, but the actual type is identical.'],
-		[8, 'Expected a type other than the supplied type, but the actual type is identical.'],
-		[9, 'Expected a type assignable to the supplied type, but the actual type is \'number\'.'],
-		[10, 'Expected a type assignable to the supplied type, but the actual type is \'any\'.'],
-		[11, 'Expected a type not assignable to the supplied type, but the actual type is \'null\'.'],
-		[12, 'Expected a type not assignable to the supplied type, but the actual type is \'undefined\'.'],
-		[17, 'Expected the supplied type, but the actual type is \'number\'.'],
-		[20, 'Expected a type assignable to the supplied type, but the actual type is \'number\'.'],
-		[24, 'Expected the supplied type, but the actual type is \'any\'.'],
+		[3, 'Expected the type argument (\'never\' without one), but the actual type is \'number\'.'],
+		[4, 'Expected the type argument (\'never\' without one), but the actual type is \'number\'.'],
+		[5, 'Expected the type argument (\'never\' without one), but the actual type is \'any\'.'],
+		[6, 'Expected the type argument (\'never\' without one), but the actual type is \'never\'.'],
+		[7, 'Expected a type other than the type argument, but the actual type is identical.'],
+		[8, 'Expected a type other than the type argument, but the actual type is identical.'],
+		[9, 'Expected a type assignable to the type argument (\'never\' without one), but the actual type is \'number\'.'],
+		[10, 'Expected a type assignable to the type argument (\'never\' without one), but the actual type is \'any\'.'],
+		[11, 'Expected a type not assignable to the type argument, but the actual type is \'null\'.'],
+		[12, 'Expected a type not assignable to the type argument, but the actual type is \'undefined\'.'],
+		[17, 'Expected the type argument (\'never\' without one), but the actual type is \'number\'.'],
+		[20, 'Expected a type assignable to the type argument (\'never\' without one), but the actual type is \'number\'.'],
+		[24, 'Expected the type argument (\'never\' without one), but the actual type is \'any\'.'],
+		[26, 'Expected the type argument (\'never\' without one), but the actual type is \'number\'.'],
+		[27, 'Expected a type assignable to the type argument (\'never\' without one), but the actual type is \'number\'.'],
 	].map(([line, message]) => ({line, message}));
 	const results = await failuresOnBothCompilers('assertion-nullable-guards');
 	assert.deepEqual(results.map(result => result.map(({line, message}) => ({line, message}))), [expected, expected]);
