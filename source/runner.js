@@ -269,8 +269,8 @@ function resolveCommand({cwd = process.cwd(), compilerPath} = {}) {
 	const packageDirectory = path.resolve(cwd);
 	const packageJson = readPackageJson(packageDirectory);
 
-	// `tsc` runs in the real path of the package, and it reports every file relative to that, so the root and the files have to be real paths too.
-	const root = fs.realpathSync(packageDirectory);
+	// `tsc` runs in the real path of the package, and it reports every file relative to that, so the root and the files have to be real paths too. The native one has the case on disk, like the path `tsc` lists a file it reached through a symlink with.
+	const root = fs.realpathSync.native(packageDirectory);
 
 	const declarationFiles = findDeclarationFiles(root, packageJson);
 	if (declarationFiles.length === 0) {
@@ -282,7 +282,8 @@ function resolveCommand({cwd = process.cwd(), compilerPath} = {}) {
 		throw new Error('Could not find type test files. Add an `index.test-d.ts` file next to the declaration file, or put them in a `test-d` or `typetests` directory.');
 	}
 
-	const files = [...new Set([...declarationFiles, ...testFiles])];
+	// Absolute roots make every `--listFiles` entry an absolute path on both compilers, and a file name that starts with `@` or `-` is not read as a response file or an option.
+	const files = [...new Set([...declarationFiles, ...testFiles])].map(file => path.resolve(root, file));
 
 	// Resolved before the temporary files are written, so a package without TypeScript leaves no temp directory behind. A given path is relative to the current directory, not to the package, where the compiler runs.
 	compilerPath = compilerPath === undefined ? resolveCompilerPath(root) : path.resolve(compilerPath);
@@ -294,8 +295,8 @@ function resolveCommand({cwd = process.cwd(), compilerPath} = {}) {
 	const typeArguments = !hasConfig && resolveFromRoot(root, '@types/node/package.json') ? ['--types', 'node'] : [];
 
 	// `--noErrorTruncation`, because a failure is about a type, and `tsc` cuts a long one to `... 12 more ...`.
-	const compilerArguments = ['--noEmit', '--pretty', 'false', '--locale', 'en', '--noErrorTruncation', ...typeArguments];
-	const {directory, typeCheckPath, configPath} = writeTemporaryFiles(root, files.map(file => path.resolve(root, file)), hasConfig);
+	const compilerArguments = ['--noEmit', '--listFiles', '--pretty', 'false', '--locale', 'en', '--noErrorTruncation', ...typeArguments];
+	const {directory, typeCheckPath, configPath} = writeTemporaryFiles(root, files, hasConfig);
 
 	if (hasConfig) {
 		compilerArguments.push(
@@ -319,6 +320,15 @@ function resolveCommand({cwd = process.cwd(), compilerPath} = {}) {
 			'null',
 			// Checking is what the tool is for.
 			'--noCheck',
+			'false',
+			// Keep debugging output out of the diagnostic and file-list stream.
+			'--diagnostics',
+			'false',
+			'--extendedDiagnostics',
+			'false',
+			'--traceResolution',
+			'false',
+			'--explainFiles',
 			'false',
 			// The config is in `node_modules/.cache`, so an `outDir` would infer a `rootDir` that leaves out the package. The root of the file system also lets a test file import a file from outside the package.
 			'--rootDir',
@@ -388,20 +398,16 @@ async function withCommand(options, run) {
 	}
 }
 
-function parseDiagnostics(output) {
+function parseCompilerOutput(output) {
 	const diagnostics = [];
+	const checkedFiles = new Set();
 
 	for (const line of output.split(/\r?\n/v)) {
 		if (line.trim() === '') {
 			continue;
 		}
 
-		// Indented lines continue the previous diagnostic.
-		if (/^\s/v.test(line) && diagnostics.length > 0) {
-			diagnostics.at(-1).message += `\n${line}`;
-			continue;
-		}
-
+		// A located diagnostic comes first, so one in a file whose name starts with whitespace is not read as a continuation, and one whose whole line is an existing path is not read as a file.
 		const match = diagnosticPattern.exec(line);
 		if (match) {
 			diagnostics.push({
@@ -411,13 +417,26 @@ function parseDiagnostics(output) {
 				column: Number(match.groups.column),
 				message: match.groups.message,
 			});
-		} else {
-			// Never drop a line that cannot be parsed, for example a diagnostic without a location.
-			diagnostics.push({message: line});
+			continue;
 		}
+
+		// `--listFiles` prints the absolute path of each file in the program after the diagnostics, including the local files a test imports.
+		if (path.isAbsolute(line) && fs.existsSync(line)) {
+			checkedFiles.add(path.resolve(line));
+			continue;
+		}
+
+		// Indented lines continue the previous diagnostic.
+		if (/^\s/v.test(line) && diagnostics.length > 0) {
+			diagnostics.at(-1).message += `\n${line}`;
+			continue;
+		}
+
+		// Never drop a line that cannot be parsed, for example a diagnostic without a location.
+		diagnostics.push({message: line});
 	}
 
-	return diagnostics;
+	return {diagnostics, checkedFiles};
 }
 
 // Keep terminal controls visible in the tool's own assertion descriptions.
@@ -464,6 +483,14 @@ function isOwnFile(root, file) {
 		&& !relativePath.split(path.sep).includes('node_modules');
 }
 
+// The line and column of `offset` in a file that starts its lines at `lineStarts`.
+function locate(lineStarts, offset) {
+	const lineIndex = lineStarts.findLastIndex(lineStart => lineStart <= offset);
+	return {line: lineIndex + 1, column: offset - lineStarts[lineIndex] + 1};
+}
+
+const noCheckMessage = '`@ts-nocheck` turns off the type check of the file. Remove it.';
+
 // The failure of an `expectError` call that no error satisfied.
 function describeUnmatchedCall({message}) {
 	return message === undefined ? 'Expected an error, but found none.' : `Expected an error that includes “${escapeControlCharacters(message)}”, but found none.`;
@@ -503,12 +530,6 @@ function readSourceFiles(root, declarationFiles, testFiles) {
 	const read = (file, isTestFile) => {
 		const source = readText(path.join(root, file));
 		const lineStarts = lineStartOffsets(source);
-
-		const locate = offset => {
-			const lineIndex = lineStarts.findLastIndex(lineStart => lineStart <= offset);
-			return {line: lineIndex + 1, column: offset - lineStarts[lineIndex] + 1};
-		};
-
 		const {calls, directives, imports} = scanSource(source, callNames);
 
 		// The other names are only the `tsd` assertions in a file that imports `tsd`, and anywhere else they can be the test's own functions.
@@ -522,12 +543,12 @@ function readSourceFiles(root, declarationFiles, testFiles) {
 			isTestFile,
 			source,
 			lineStarts,
-			calls: isTestFile ? expectErrorCalls.map(call => ({...call, ...locate(call.start), isMatched: false})) : [],
-			uncheckedCalls: uncheckedCalls.map(call => ({...call, ...locate(call.start)})),
+			calls: isTestFile ? expectErrorCalls.map(call => ({...call, ...locate(lineStarts, call.start), isMatched: false})) : [],
+			uncheckedCalls: uncheckedCalls.map(call => ({...call, ...locate(lineStarts, call.start)})),
 			directives: directives
 				.filter(directive => isTestFile || directive.name === 'nocheck')
-				.map(directive => ({...directive, ...locate(directive.start)})),
-			imports: isTestFile ? [] : imports.map(entry => ({...entry, ...locate(entry.start)})),
+				.map(directive => ({...directive, ...locate(lineStarts, directive.start)})),
+			imports: isTestFile ? [] : imports.map(entry => ({...entry, ...locate(lineStarts, entry.start)})),
 		};
 
 		sourceFiles.set(path.resolve(root, file), sourceFile);
@@ -555,6 +576,34 @@ function readSourceFiles(root, declarationFiles, testFiles) {
 	}
 
 	return sourceFiles;
+}
+
+/*
+Returns a failure for each `@ts-nocheck` in the other files of the package that the compiler read, like a helper a test file imports. `checkedFiles` are their paths, and `sourceFiles` are the files `readSourceFiles()` already read, which are left out.
+
+The helpers are not added to `sourceFiles`, because they are neither test files nor declaration files that users of the package get.
+*/
+function findUncheckedSourceFailures(root, checkedFiles, sourceFiles) {
+	const failures = [];
+
+	for (const file of checkedFiles) {
+		// A JavaScript file is only type checked with `checkJs`, which the tool does not know, so a vendored file with the directive would fail the run for nothing. Data inputs such as JSON do not have pragmas.
+		if (!/\.(?:[cm]?ts|tsx)$/v.test(file) || !isOwnFile(root, file) || sourceFiles.has(file)) {
+			continue;
+		}
+
+		const source = readText(file);
+		const noCheckDirective = scanSource(source, new Set()).directives.find(({name}) => name === 'nocheck');
+		if (noCheckDirective) {
+			failures.push({
+				file: path.relative(root, file).replaceAll(path.sep, '/'),
+				...locate(lineStartOffsets(source), noCheckDirective.start),
+				message: noCheckMessage,
+			});
+		}
+	}
+
+	return failures;
 }
 
 /*
@@ -666,21 +715,27 @@ async function runTypeCheck(command, entryPoints) {
 	const isInWrittenDeclarations = diagnostic => !isInTypeCheckFile(diagnostic) && resolve(diagnostic)?.startsWith(`${temporaryDirectory}${path.sep}`);
 
 	let runtimeExportChecks = await writeRuntimeExportChecks(command, entryPoints);
-	let diagnostics = parseDiagnostics(await runCompiler(command));
+	let {diagnostics, checkedFiles} = parseCompilerOutput(await runCompiler(command));
 
 	if (runtimeExportChecks.size > 0 && diagnostics.every(diagnostic => !isTypeCheckError(diagnostic)) && diagnostics.some(diagnostic => isInWrittenDeclarations(diagnostic))) {
 		fs.writeFileSync(typeCheckPath, typeCheckSource);
 		runtimeExportChecks = new Map();
-		diagnostics = parseDiagnostics(await runCompiler(command));
+		({diagnostics, checkedFiles} = parseCompilerOutput(await runCompiler(command)));
 	}
 
 	const isTypeChecked = diagnostics.some(diagnostic => isTypeCheckError(diagnostic));
 	if (!isTypeChecked) {
-		return {isTypeChecked, diagnostics, runtimeExportFailures: []};
+		return {
+			isTypeChecked,
+			diagnostics,
+			checkedFiles,
+			runtimeExportFailures: [],
+		};
 	}
 
 	return {
 		isTypeChecked,
+		checkedFiles,
 		diagnostics: diagnostics.filter(diagnostic => !isInTypeCheckFile(diagnostic)),
 		runtimeExportFailures: diagnostics
 			.filter(diagnostic => isInTypeCheckFile(diagnostic))
@@ -701,12 +756,22 @@ The package `tsconfig.json` is used when there is one, so the check runs against
 */
 export async function typeTest(options) {
 	return withCommand(options, async command => {
-		const {root, packageJson, declarationFiles, testFiles} = command;
+		const {root, packageJson, declarationFiles} = command;
+		const testFiles = new Set(command.testFiles);
+
+		const {isTypeChecked, diagnostics, checkedFiles, runtimeExportFailures} = await runTypeCheck(command, findEntryPoints(root, packageJson));
+
+		// Imported tests participate in assertions when they use the same test names or directories as discovered roots.
+		for (const file of checkedFiles) {
+			const relativeFile = path.relative(root, file);
+			const isTestFile = /\.test-d\.tsx?$/v.test(relativeFile) || (relativeFile.endsWith('.tsx') && testDirectories.some(directory => relativeFile.startsWith(`${directory}${path.sep}`)));
+			if (isTestFile && isOwnFile(root, file)) {
+				testFiles.add(relativeFile);
+			}
+		}
 
 		const sourceFiles = readSourceFiles(root, declarationFiles, testFiles);
-		const {isTypeChecked, diagnostics, runtimeExportFailures} = await runTypeCheck(command, findEntryPoints(root, packageJson));
-
-		const failures = [...runtimeExportFailures];
+		const failures = [...runtimeExportFailures, ...findUncheckedSourceFailures(root, checkedFiles, sourceFiles)];
 
 		for (const diagnostic of diagnostics) {
 			// When the type check did not run, the errors are syntax errors or errors in the compiler options. None of them can be the error a call expects, and one in a dependency is not noise, or the run would pass with nothing checked.
@@ -715,18 +780,18 @@ export async function typeTest(options) {
 				continue;
 			}
 
-			// Errors in dependencies, and in any other file outside the package, like a symlinked workspace package, are environment noise, not failures of this package.
-			if (!isOwnFile(root, diagnostic.file)) {
+			// Errors in compiler inputs outside the package, like dependencies or a symlinked workspace package, are environment noise. Diagnostics outside the input graph, including configuration errors, remain failures.
+			if (!isOwnFile(root, diagnostic.file) && checkedFiles.has(path.resolve(root, diagnostic.file))) {
 				continue;
 			}
 
-			// A name that does not exist is a typo in the test, not the error it expects, so it never satisfies a call. TypeScript has several codes for it, all worded as a name or a namespace it cannot find (the locale is English), and one for a shorthand property. A property that does not exist still satisfies a call, because that is a normal thing to test.
-			const isMissingName = /^error TS(?:\d+: Cannot find (?:name|namespace) '|18004:)/v.test(diagnostic.message);
+			// A name that does not exist is a typo in the test, not the error it expects, so it never satisfies a call. TypeScript has several codes for it, all worded as a name or a namespace it cannot find (the locale is English), and one for a shorthand property. A property that does not exist still satisfies a call, because that is a normal thing to test. An unused `@ts-expect-error` directive is also a mistake in the test, so it must remain a failure.
+			const isTestMistake = /^error TS(?:\d+: Cannot find (?:name|namespace) '|(?:18004|2578):)/v.test(diagnostic.message);
 
 			const sourceFile = sourceFiles.get(path.resolve(root, diagnostic.file));
 			const offset = sourceFile ? sourceFile.lineStarts[diagnostic.line - 1] + diagnostic.column - 1 : undefined;
 
-			if (sourceFile && !isMissingName) {
+			if (sourceFile && !isTestMistake) {
 				// A call passes when there is a type error after its name, in its type argument or inside its parentheses, like with `tsd`, so an error on the name itself is a failure of its own. A call with a message only takes an error that includes it, and an error that does not is a failure, so it shows what the error was. Every enclosing call must accept an error before it can be left out.
 				const containingCalls = sourceFile.calls.filter(call => offset >= call.nameEnd && offset < call.end);
 				const matchingCalls = containingCalls.filter(call => call.message === undefined || diagnostic.message.includes(call.message));
@@ -769,7 +834,7 @@ export async function typeTest(options) {
 					line: directive.line,
 					column: directive.column,
 					message: directive.name === 'nocheck'
-						? '`@ts-nocheck` turns off the type check of the file. Remove it.'
+						? noCheckMessage
 						: '`@ts-ignore` hides a failure. Use `@ts-expect-error` instead, which fails when there is no error to hide.',
 				});
 			}

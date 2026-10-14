@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import {execFile} from 'node:child_process';
@@ -7,13 +6,23 @@ import {promisify} from 'node:util';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {typeTest, showConfig} from '../source/runner.js';
+// eslint-disable-next-line node-test/no-import-test-files -- The test command skips the files that start with `_`.
+import {
+	fixturePath,
+	typescript6,
+	typescript7,
+	assertionsPath,
+	emptyPackage,
+	withTemporaryPackage,
+	withFixtureCopy,
+	failures,
+	failureLines,
+	failuresOnBothCompilers,
+} from './_utilities.js';
 
 const execFileAsync = promisify(execFile);
 
-const fixturePath = name => path.join(import.meta.dirname, 'fixtures', name);
 const cliPath = path.join(import.meta.dirname, '..', 'source', 'cli.js');
-const typescript6 = path.join(import.meta.dirname, '..', 'node_modules', 'typescript', 'bin', 'tsc');
-const typescript7 = path.join(import.meta.dirname, '..', 'node_modules', '@typescript', 'native', 'bin', 'tsc');
 
 // Asserts that `check` leaves none of the temporary directories behind in the `node_modules/.cache` of the package in `directory`, which every run has to clean up after itself. The package is outside the repository and has no `node_modules`, so the directories go in one that is made in the package, and no other run uses it.
 async function assertNoTemporaryDirectoryIsLeft(directory, check) {
@@ -40,43 +49,11 @@ async function withNodeOptions(value, check) {
 	}
 }
 
-// Copies a fixture to a temporary package, so its temporary files do not go in the `node_modules` of this repository.
-async function withFixtureCopy(name, check) {
-	await withTemporaryPackage({}, async directory => {
-		fs.cpSync(fixturePath(name), directory, {recursive: true, verbatimSymlinks: true});
-		await check(directory);
-	});
-}
-
-// Writes `files` to a directory in the temp directory. It is outside the repository, so for a package in it, the walk up does not find the `typescript` this repository has.
-async function withTemporaryPackage(files, check) {
-	const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'package-'));
-
-	try {
-		for (const [file, contents] of Object.entries(files)) {
-			fs.mkdirSync(path.dirname(path.join(directory, file)), {recursive: true});
-			fs.writeFileSync(path.join(directory, file), contents);
-		}
-
-		await check(directory);
-	} finally {
-		fs.rmSync(directory, {recursive: true, force: true});
-	}
-}
-
 // The failure for a run in which `tsc` did not type check, which comes before the failures with a location.
 const typeCheckDidNotRun = {message: 'The type check did not run. A syntax error or an error in the compiler options stops it.'};
 
-const failures = async (name, options) => {
-	const result = await typeTest({cwd: fixturePath(name), ...options});
-	return result.failures;
-};
-
-// The failures the way the CLI prints them, which is shorter to compare than the objects.
-const failureLines = async (name, options) => {
-	const result = await failures(name, options);
-	return result.map(({file, line, column, message}) => file === undefined ? message : `${file}:${line}:${column}  ${message}`);
-};
+// The line of each failure, with a compiler error shortened to its code, which is all a test of where errors go needs.
+const linesAndCodes = result => result.map(({line, message}) => ({line, message: message.startsWith('error TS') ? message.split(':', 1)[0] : message}));
 
 // `GITHUB_ACTIONS` is cleared, so the output is the same when these tests run in GitHub Actions.
 
@@ -166,6 +143,86 @@ test('reports the comments that hide failures', async () => {
 	]);
 });
 
+test('reports unchecked source helpers imported by type tests', async () => {
+	// Helpers are not test files or published declarations, and a helper's `@ts-ignore` is left alone. The helpers come from the files the compiler lists, so both versions are checked.
+	const expected = [
+		'aliases/value.ts:1:1  `@ts-nocheck` turns off the type check of the file. Remove it.',
+		'helper.ts:1:1  `@ts-nocheck` turns off the type check of the file. Remove it.',
+		'nested-helper.ts:2:1  `@ts-nocheck` turns off the type check of the file. Remove it.',
+	];
+	assert.deepEqual(await failureLines('imported-helper-nocheck'), expected);
+	assert.deepEqual(await failureLines('imported-helper-nocheck', {compilerPath: typescript6}), expected);
+});
+
+test('does not report `@ts-nocheck` in a JavaScript helper or a comment in a JSON file', async () => {
+	// Without `checkJs`, a JavaScript file is not type checked, so the directive changes nothing, like a vendored file can have. A JSON file has no directives, so its comment is not one.
+	const files = {
+		...emptyPackage,
+		'tsconfig.json': '{"compilerOptions": {"strict": true, "module": "nodenext", "types": [], "allowJs": true, "resolveJsonModule": true}}\n',
+		'data.json': '// @ts-nocheck\n{"value": 1}\n',
+		'helper.js': '// @ts-nocheck\n/** @type {string} */\nexport const value = 1;\n',
+		'index.test-d.ts': [
+			'import data from \'./data.json\' with {type: \'json\'};',
+			'import {value} from \'./helper.js\';',
+			`import {expectTypeOf} from ${JSON.stringify(assertionsPath)};`,
+			'expectTypeOf(data.value).toBe<number>();',
+			'expectTypeOf(value).toBe<string>();',
+			'',
+		].join('\n'),
+	};
+
+	await withTemporaryPackage(files, async directory => {
+		assert.deepEqual(await failures(directory, {compilerPath: typescript7}), []);
+	});
+});
+
+test('checks the assertions in a test file that another test file imports', async () => {
+	// It has the name or the directory of a test file. A helper with an assertion is not a test file, so its call is not checked. The files come from the files the compiler lists, so both versions are checked.
+	const expected = [
+		'imported.test-d.tsx:4:1  Expected an error, but found none.',
+		'nested/imported.test-d.ts:4:1  Expected an error, but found none.',
+		'test-d/view.tsx:4:1  Expected an error, but found none.',
+		'typetests/unchecked.tsx:3:1  `@ts-ignore` hides a failure. Use `@ts-expect-error` instead, which fails when there is no error to hide.',
+		'typetests/unchecked.tsx:6:1  `printType` from `tsd` does nothing here, because only `tsd` checks it. Remove it.',
+	];
+	assert.deepEqual(await failureLines('imported-assertion-tsx'), expected);
+	assert.deepEqual(await failureLines('imported-assertion-tsx', {compilerPath: typescript6}), expected);
+});
+
+test('does not check the assertions in a test file of a dependency', async () => {
+	// The test file of a dependency is not the package's own, even when a test file imports it.
+	const files = {
+		...emptyPackage,
+		'index.test-d.ts': 'import \'dependency/index.test-d.js\';\n',
+		'node_modules/dependency/package.json': '{"name": "dependency", "type": "module"}\n',
+		'node_modules/dependency/index.test-d.ts': `import {expectError} from ${JSON.stringify(assertionsPath)};\n\nexpectError(1);\n`,
+	};
+
+	await withTemporaryPackage(files, async directory => {
+		assert.deepEqual(await failures(directory, {compilerPath: typescript7}), []);
+	});
+});
+
+test('does not report `@ts-nocheck` in a dependency that a test file imports', async () => {
+	// A dependency can publish TypeScript source with the directive, and it is not a file of the package.
+	const files = {
+		...emptyPackage,
+		'index.test-d.ts': 'import {value} from \'dependency\';\n\nexport const count: number = value;\n',
+		'node_modules/dependency/package.json': '{"name": "dependency", "type": "module", "exports": {"types": "./index.ts"}}\n',
+		'node_modules/dependency/index.ts': '// @ts-nocheck\nexport const value: number = 1;\n',
+	};
+
+	await withTemporaryPackage(files, async directory => {
+		assert.deepEqual(await failures(directory, {compilerPath: typescript7}), []);
+	});
+});
+
+test('honors a `@ts-check` that turns the check back on after `@ts-nocheck`', async () => {
+	// TypeScript takes the last of the two, in a test file, a declaration file, an imported test file, and a helper alike.
+	assert.deepEqual(await failures('overridden-nocheck'), []);
+	assert.deepEqual(await failures('overridden-nocheck', {compilerPath: typescript6}), []);
+});
+
 test('an `expectError` call with a message only passes for an error that includes it', async () => {
 	// An error that does not include the message is reported, so the failure shows what the error was. Each form of a string literal is read, which a message that does not match proves. Anything else is not a message, so those calls take any error.
 	assert.deepEqual(await failureLines('expect-error-message'), [
@@ -226,6 +283,92 @@ test('describes a failed assertion in one line, the same on TypeScript 6 and 7',
 	assert.deepEqual(typescript6Failures.map(({line, message}) => ({line, message})), expected);
 });
 
+test('expected assertion object types are not confused with guarded expected types', async () => {
+	const expected = [
+		{line: 3, message: 'Expected type \'ExpectTypeOf<string>\', but the actual type is \'number\'.'},
+		{line: 4, message: 'Expected a type assignable to \'ExpectTypeOf<string>\', but the actual type is \'number\'.'},
+		{line: 5, message: 'Expected a type other than \'ExpectTypeOf<string>\', but the actual type is identical.'},
+		{line: 8, message: 'Expected type \'Negated<string>\', but the actual type is \'number\'.'},
+		{line: 9, message: 'Expected a type assignable to \'Negated<string>\', but the actual type is \'number\'.'},
+		{line: 10, message: 'Expected a type other than \'Negated<string>\', but the actual type is identical.'},
+		{line: 13, message: 'Expected the supplied type, but the actual type is \'ExpectTypeOf<string>\'.'},
+		{line: 14, message: 'Expected the supplied type, but the actual type is \'Negated<string>\'.'},
+	];
+	const results = await failuresOnBothCompilers('assertion-expectation-types');
+	assert.deepEqual(results.map(result => result.map(({line, message}) => ({line, message}))), [expected, expected]);
+});
+
+test('describes a failed assertion whose expected type satisfies the constraint', async () => {
+	// Without `strictNullChecks`, `null` and `undefined` satisfy every constraint, like `any` and `never` do, and so does a failure type taken from an assertion.
+	const expected = [
+		[3, 'Expected the supplied type, but the actual type is \'number\'.'],
+		[4, 'Expected the supplied type, but the actual type is \'number\'.'],
+		[5, 'Expected the supplied type, but the actual type is \'any\'.'],
+		[6, 'Expected the supplied type, but the actual type is \'never\'.'],
+		[7, 'Expected a type other than the supplied type, but the actual type is identical.'],
+		[8, 'Expected a type other than the supplied type, but the actual type is identical.'],
+		[9, 'Expected a type assignable to the supplied type, but the actual type is \'number\'.'],
+		[10, 'Expected a type assignable to the supplied type, but the actual type is \'any\'.'],
+		[11, 'Expected a type not assignable to the supplied type, but the actual type is \'null\'.'],
+		[12, 'Expected a type not assignable to the supplied type, but the actual type is \'undefined\'.'],
+		[17, 'Expected the supplied type, but the actual type is \'number\'.'],
+		[20, 'Expected a type assignable to the supplied type, but the actual type is \'number\'.'],
+		[24, 'Expected the supplied type, but the actual type is \'any\'.'],
+	].map(([line, message]) => ({line, message}));
+	const results = await failuresOnBothCompilers('assertion-nullable-guards');
+	assert.deepEqual(results.map(result => result.map(({line, message}) => ({line, message}))), [expected, expected]);
+});
+
+test('shows the control characters in a failure message as escapes', async () => {
+	// A literal type or a message filter can hold a character that controls the terminal. The description of a failed assertion comes from the compiler's message, so both versions are checked.
+	const controlType = JSON.stringify('\u{9B}31m');
+	const files = {
+		...emptyPackage,
+		'index.test-d.ts': [
+			`import {expectTypeOf, expectError} from ${JSON.stringify(assertionsPath)};`,
+			`expectTypeOf<number>().toBe<${controlType}>();`,
+			'expectTypeOf<number>().toBe<`line\nbreak`>();',
+			`expectTypeOf<${controlType}>().not.toBe<${controlType}>();`,
+			`expectError(1, ${JSON.stringify('\u{1B}[31mcolor')});`,
+			`expectError(1, ${JSON.stringify('\u{0}nul\ttab')});`,
+			'',
+		].join('\n'),
+	};
+
+	await withTemporaryPackage(files, async directory => {
+		const expected = [
+			String.raw`index.test-d.ts:2:29  Expected type '"\u009b31m"', but the actual type is 'number'.`,
+			'index.test-d.ts:3:29  Expected type \'`line\\u000abreak`\', but the actual type is \'number\'.',
+			String.raw`index.test-d.ts:5:33  Expected a type other than '"\u009b31m"', but the actual type is identical.`,
+			String.raw`index.test-d.ts:6:1  Expected an error that includes “\u001b[31mcolor”, but found none.`,
+			String.raw`index.test-d.ts:7:1  Expected an error that includes “\u0000nul\u0009tab”, but found none.`,
+		];
+		assert.deepEqual(await failureLines(directory, {compilerPath: typescript7}), expected);
+		assert.deepEqual(await failureLines(directory, {compilerPath: typescript6}), expected);
+	});
+});
+
+test('a message filter with a line break matches the continuation lines of an error', async () => {
+	const files = {
+		...emptyPackage,
+		'index.test-d.ts': [
+			`import {expectError} from ${JSON.stringify(assertionsPath)};`,
+			'declare function takesObject(value: {value: number}): void;',
+			'declare const wrong: {value: string};',
+			String.raw`expectError(takesObject(wrong), "\n  Types of property 'value'");`,
+			String.raw`expectError(takesObject(wrong), "different\nmessage");`,
+			'',
+		].join('\n'),
+	};
+
+	await withTemporaryPackage(files, async directory => {
+		assert.deepEqual(linesAndCodes(await failures(directory, {compilerPath: typescript7})), [
+			{line: 5, message: String.raw`Expected an error that includes “different\u000amessage”, but found none.`},
+			{line: 5, message: 'error TS2345'},
+		]);
+	});
+});
+
 test('reports errors in the declaration file', async () => {
 	assert.deepEqual(await failureLines('declaration-error'), [
 		'index.d.ts:1:38  error TS2304: Cannot find name \'Missing\'.',
@@ -234,6 +377,49 @@ test('reports errors in the declaration file', async () => {
 
 test('`expectError` calls with parentheses in strings, comments, template literals, and regexes, and a regex after a keyword', async () => {
 	assert.deepEqual(await failures('scanner'), []);
+});
+
+test('an `expectError` call does not hide nested assertions or suppression directives', async () => {
+	// A genuine error in the outer call would otherwise make all three kinds of hidden failure pass.
+	assert.deepEqual(await failureLines('expect-error-nested-content'), [
+		'index.test-d.ts:6:24  Expected an error, but found none.',
+		'index.test-d.ts:11:2  `@ts-ignore` hides a failure. Use `@ts-expect-error` instead, which fails when there is no error to hide.',
+		'index.test-d.ts:16:24  `printType` from `tsd` does nothing here, because only `tsd` checks it. Remove it.',
+		'index.test-d.ts:23:24  Expected an error that includes “wrong message”, but found none.',
+		'index.test-d.ts:23:42  error TS2345: Argument of type \'number\' is not assignable to parameter of type \'string\'.',
+	]);
+});
+
+test('nested assertion filters do not hide errors rejected by another filter', async () => {
+	// An error is only left out when every call around it accepts it.
+	assert.deepEqual(linesAndCodes(await failures('expect-error-nested-messages')), [
+		{line: 5, message: 'Expected an error that includes “wrong inner message”, but found none.'},
+		{line: 5, message: 'error TS2345'},
+		{line: 6, message: 'Expected an error that includes “wrong outer message”, but found none.'},
+		{line: 6, message: 'error TS2345'},
+		{line: 7, message: 'Expected an error that includes “wrong outer message”, but found none.'},
+		{line: 7, message: 'Expected an error that includes “wrong inner message”, but found none.'},
+		{line: 7, message: 'error TS2345'},
+		{line: 17, message: 'error TS2345'},
+		{line: 20, message: 'error TS2345'},
+	]);
+});
+
+test('an unused `@ts-expect-error` directive does not satisfy an `expectError` call', async () => {
+	// The directive is a mistake in the test, like a name that does not exist, so it stays a failure, also inside a call.
+	assert.deepEqual(linesAndCodes(await failures('expect-error-unused-directives')), [
+		{line: 4, message: 'Expected an error, but found none.'},
+		{line: 5, message: 'error TS2578'},
+		{line: 9, message: 'Expected an error, but found none.'},
+		{line: 15, message: 'error TS2578'},
+		{line: 21, message: 'Expected an error that includes “Unused \'@ts-expect-error\' directive”, but found none.'},
+		{line: 22, message: 'error TS2578'},
+		{line: 27, message: 'error TS2578'},
+		{line: 31, message: 'Expected an error that includes “Unused \'@ts-expect-error\' directive”, but found none.'},
+		{line: 31, message: 'Expected an error, but found none.'},
+		{line: 32, message: 'error TS2578'},
+		{line: 40, message: 'error TS2578'},
+	]);
 });
 
 test('reports the `tsd` assertions that pass with any value, only in a file that imports `tsd`', async () => {
@@ -492,6 +678,25 @@ test('uses the `extends` chain of the project tsconfig.json', async () => {
 	]);
 });
 
+for (const extendsPath of ['../base.json', './node_modules/shared-config/base.json']) {
+	test(`reports an invalid option in a config that the project tsconfig.json extends from a parent directory or a dependency: ${extendsPath}`, async () => {
+		// The config is not one of the files the compiler checks, so its error is not noise from a file outside the package. It is still a failure, also when the config is in `node_modules`.
+		const files = {
+			'package/package.json': emptyPackage['package.json'],
+			'package/index.d.ts': emptyPackage['index.d.ts'],
+			'package/index.test-d.ts': 'export {};\n',
+			'package/tsconfig.json': JSON.stringify({extends: extendsPath}),
+			[path.join('package', extendsPath)]: '{\n\t"compilerOptions": {\n\t\t"strict": true,\n\t\t"aNonexistentCompilerOption": true\n\t}\n}\n',
+		};
+
+		await withTemporaryPackage(files, async directory => {
+			const expected = [`${extendsPath.replace(/^\.\//v, '')}:4:3  error TS5023: Unknown compiler option 'aNonexistentCompilerOption'.`];
+			assert.deepEqual(await failureLines(path.join(directory, 'package'), {compilerPath: typescript7}), expected);
+			assert.deepEqual(await failureLines(path.join(directory, 'package'), {compilerPath: typescript6}), expected);
+		});
+	});
+}
+
 test('finds `@types/node` when the package has a tsconfig.json', async () => {
 	// TypeScript finds a `types` entry from the directory holding the config, so the generated config has to be where it sees the package `node_modules`.
 	assert.deepEqual(await failures('tsconfig-types'), []);
@@ -728,6 +933,32 @@ test('ignores errors in dependencies', async () => {
 	assert.deepEqual(await failures('dependency-error'), []);
 });
 
+test('ignores errors in a symlinked dependency when the package path has another case than on disk', async t => {
+	// TypeScript lists a file it reached through a symlink with the case on disk, so the package root has to have that case too.
+	const files = {
+		'package/package.json': emptyPackage['package.json'],
+		'package/index.d.ts': emptyPackage['index.d.ts'],
+		'package/index.test-d.ts': 'import type {Broken} from \'dependency\';\n\nexport type Value = Broken;\n',
+		'dependency/package.json': '{"name": "dependency", "type": "module", "types": "index.d.ts"}\n',
+		'dependency/index.d.ts': 'export type Broken = Missing;\n',
+	};
+
+	await withTemporaryPackage(files, async directory => {
+		fs.mkdirSync(path.join(directory, 'package', 'node_modules'));
+		fs.symlinkSync(path.join(directory, 'dependency'), path.join(directory, 'package', 'node_modules', 'dependency'), 'junction');
+
+		// The directory that both are in, so the case also differs in the path of the dependency.
+		const otherCasePath = path.join(path.dirname(directory), path.basename(directory).toUpperCase(), 'package');
+		if (!fs.existsSync(otherCasePath)) {
+			t.skip('The file system is case sensitive.');
+			return;
+		}
+
+		t.assert.deepStrictEqual(await failures(otherCasePath, {compilerPath: typescript7}), []);
+		t.assert.deepStrictEqual(await failures(otherCasePath, {compilerPath: typescript6}), []);
+	});
+});
+
 test('type checks a package whose tsconfig.json turns the type check off', async () => {
 	// `noCheck` makes `tsc` report nothing, and checking is what the tool is for.
 	assert.deepEqual(await failureLines('tsconfig-no-check'), [
@@ -765,11 +996,74 @@ test('reports errors in a file whose name starts with two dots', async () => {
 
 test('reports diagnostics without a location', async () => {
 	// A missing root file stops the type check too.
+	const missingFile = path.join(fixturePath('missing-types-file'), 'missing.d.ts').replaceAll(path.sep, '/');
 	assert.deepEqual(await failureLines('missing-types-file'), [
-		'error TS6053: File \'missing.d.ts\' not found.\n  The file is in the program because:\n    Root file specified for compilation',
+		`error TS6053: File '${missingFile}' not found.\n  The file is in the program because:\n    Root file specified for compilation`,
 		typeCheckDidNotRun.message,
 	]);
 });
+
+test('ignores the debugging output that compiler options turn on', async () => {
+	// The options print lines that are not diagnostics, which would be reported as failures without a location. Both versions print them differently.
+	const files = {
+		...emptyPackage,
+		'tsconfig.json': '{"compilerOptions": {"strict": true, "module": "nodenext", "types": [], "diagnostics": true, "extendedDiagnostics": true, "traceResolution": true, "explainFiles": true}}\n',
+		'index.test-d.ts': [
+			`import {expectTypeOf, expectError} from ${JSON.stringify(assertionsPath)};`,
+			'declare function takesString(value: string): void;',
+			'expectError(takesString(1), \'not assignable\');',
+			'expectTypeOf<number>().toBe<string>();',
+			'',
+		].join('\n'),
+	};
+
+	await withTemporaryPackage(files, async directory => {
+		const expected = ['index.test-d.ts:4:29  Expected type \'string\', but the actual type is \'number\'.'];
+		assert.deepEqual(await failureLines(directory, {compilerPath: typescript7}), expected);
+		assert.deepEqual(await failureLines(directory, {compilerPath: typescript6}), expected);
+	});
+});
+
+test('reads a diagnostic in a file whose name starts with whitespace', async () => {
+	// The line of the second error starts with whitespace, like the continuation of the first one.
+	const files = {
+		...emptyPackage,
+		' leading.test-d.ts': [
+			`import {expectError} from ${JSON.stringify(assertionsPath)};`,
+			'declare function greet(value: string): void;',
+			'greet(1);',
+			'expectError(greet(1));',
+			'declare function takesObject(value: {value: number}): void;',
+			'declare const wrong: {value: string};',
+			'expectError(takesObject(wrong), "Types of property \'value\' are incompatible");',
+			'',
+		].join('\n'),
+	};
+
+	await withTemporaryPackage(files, async directory => {
+		const expected = [' leading.test-d.ts:3:7  error TS2345: Argument of type \'number\' is not assignable to parameter of type \'string\'.'];
+		assert.deepEqual(await failureLines(directory, {compilerPath: typescript7}), expected);
+		assert.deepEqual(await failureLines(directory, {compilerPath: typescript6}), expected);
+	});
+});
+
+for (const declarationFile of ['@types/index.d.ts', '-index.d.ts']) {
+	test(`checks a package whose file name starts with a character that \`tsc\` reads as a flag: ${declarationFile}`, async () => {
+		// Without a tsconfig.json, the files are arguments of `tsc`, which reads one that starts with `@` as a response file, and one that starts with `-` as an option.
+		const testFile = declarationFile.replace(/\.d\.ts$/v, '.test-d.ts');
+		const files = {
+			'package.json': JSON.stringify({type: 'module', types: `./${declarationFile}`}),
+			[declarationFile]: 'export {};\n',
+			[testFile]: 'export const value: number = \'text\';\n',
+		};
+
+		await withTemporaryPackage(files, async directory => {
+			const expected = [`${testFile}:1:14  error TS2322: Type 'string' is not assignable to type 'number'.`];
+			assert.deepEqual(await failureLines(directory, {compilerPath: typescript7}), expected);
+			assert.deepEqual(await failureLines(directory, {compilerPath: typescript6}), expected);
+		});
+	});
+}
 
 test('checks with Node.js resolution when there is no tsconfig.json', async () => {
 	// `export =` in an ESM package is an error under Node.js resolution, and the fixture package is ESM.
@@ -829,7 +1123,8 @@ test('CLI indents continuation lines and lists diagnostics without a location fi
 `);
 
 	const {stderr: locationlessOutput} = await runCli('missing-types-file');
-	assert.equal(locationlessOutput, `error TS6053: File 'missing.d.ts' not found.
+	const missingFile = path.join(fixturePath('missing-types-file'), 'missing.d.ts').replaceAll(path.sep, '/');
+	assert.equal(locationlessOutput, `error TS6053: File '${missingFile}' not found.
   The file is in the program because:
     Root file specified for compilation
 The type check did not run. A syntax error or an error in the compiler options stops it.
@@ -870,7 +1165,8 @@ test('CLI adds GitHub Actions annotations', async () => {
 `);
 
 	const {stdout: locationlessOutput} = await runCli('missing-types-file', [], environment);
-	assert.equal(locationlessOutput, `::error::error TS6053: File 'missing.d.ts' not found.%0A  The file is in the program because:%0A    Root file specified for compilation
+	const missingFile = path.join(fixturePath('missing-types-file'), 'missing.d.ts').replaceAll(path.sep, '/');
+	assert.equal(locationlessOutput, `::error::error TS6053: File '${missingFile}' not found.%0A  The file is in the program because:%0A    Root file specified for compilation
 ::error::The type check did not run. A syntax error or an error in the compiler options stops it.
 `);
 

@@ -1,0 +1,10 @@
+{
+	"compilerOptions": {
+		"strict": true,
+		"module": "nodenext",
+		"target": "esnext",
+		"paths": {
+			"@fixture/*": ["./aliases/*.ts"]
+		}
+	}
+}

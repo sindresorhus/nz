@@ -26,6 +26,11 @@ The preserved `new` token also identifies a constructor target, rather than a fu
 `function` is kept too, so that `scanSource()` can tell a declaration from a call, and so are the `controlKeywords`, so that it can find the end of their head. A `/` after any of them is a division, which is never valid there anyway.
 */
 function afterIdentifier(previous, identifier) {
+	// `for await (…)` has a head like `for (…)`.
+	if (identifier === 'await' && previous === 'for') {
+		return previous;
+	}
+
 	const isKeyword = regexPrecedingKeywords.has(identifier) || controlKeywords.has(identifier) || identifier === 'function';
 	return previous !== '.' && previous !== '#' && isKeyword ? identifier : 'a';
 }
@@ -307,13 +312,15 @@ function findParentheses(source, index) {
 	let position = skipWhitespaceAndComments(source, index);
 
 	while (source[position] === '!' || source.startsWith('?.', position)) {
+		const isNonNull = source[position] === '!';
+
 		// A postfix non-null assertion cannot cross a line break, unlike an optional call.
 		// eslint-disable-next-line unicorn/prefer-regexp-test -- The shared global pattern must not change lastIndex.
-		if (source[position] === '!' && source.slice(index, position).search(lineBreakPattern) !== -1) {
+		if (isNonNull && source.slice(index, position).search(lineBreakPattern) !== -1) {
 			return -1;
 		}
 
-		index = position + (source[position] === '!' ? 1 : 2);
+		index = position + (isNonNull ? 1 : 2);
 		position = skipWhitespaceAndComments(source, index);
 	}
 
@@ -363,6 +370,8 @@ function decodeStringLiteral(literal) {
 	});
 }
 
+const closingBrackets = new Map([['(', ')'], ['[', ']'], ['{', '}']]);
+
 /*
 Returns the message of an `expectError` call, whose parentheses start at `start` and end at `end`: the argument after the last comma outside any brackets, when it is one string literal. Anything else is not a message, like a variable, `'a' + 'b'`, or the rest of a type argument after a comma, like `'b'>` in `create<'a', 'b'>()`.
 */
@@ -378,10 +387,10 @@ function readMessage(source, start, end) {
 		}
 
 		const character = source[index];
-		if ('([{'.includes(character)) {
+		const closingCharacter = closingBrackets.get(character);
+		if (closingCharacter) {
 			// Keep a token for the group, so a string followed by an index or a call is not read as a lone literal.
 			arguments_.at(-1).push(character);
-			const closingCharacter = ')]}'['([{'.indexOf(character)];
 			index = findClosing(source, index, character, closingCharacter);
 			if (index === -1) {
 				return undefined;
@@ -411,7 +420,7 @@ function readMessage(source, start, end) {
 }
 
 /*
-Returns `ignore` or `nocheck` when the comment is a `@ts-ignore` or `@ts-nocheck` directive that TypeScript honors, with the same rules: `@ts-ignore` in a line comment, or on the last line of a block comment, and `@ts-nocheck` only in a line comment before the first statement.
+Returns `ignore`, `check`, or `nocheck` when the comment is a directive that TypeScript honors, with the same rules: `@ts-ignore` in a line comment, or on the last line of a block comment, and `@ts-check` or `@ts-nocheck` only in a line comment before the first statement.
 */
 function readDirective(comment, hasStatement) {
 	if (!comment.startsWith('//')) {
@@ -423,7 +432,7 @@ function readDirective(comment, hasStatement) {
 	}
 
 	// TypeScript reads the name of a pragma without case.
-	return !hasStatement && /^\/\/\/?\s*@ts-nocheck(?=[\s:]|$)/iv.test(comment) ? 'nocheck' : undefined;
+	return hasStatement ? undefined : /^\/\/\/?\s*@ts-(?<name>check|nocheck)(?=[\s:]|$)/iv.exec(comment)?.groups.name.toLowerCase();
 }
 
 // Whether a string after these two tokens is a module specifier: `from 'x'`, `import 'x'`, `import('x')` and `require('x')`.
@@ -441,7 +450,7 @@ function isExpressionStart(previous) {
 }
 
 /*
-Finds the calls to the functions in `callNames`, like `expectError(…)` and `expectError<…>(…)`, in a file without a TypeScript parser, the `@ts-ignore` and `@ts-nocheck` comments, and the modules it imports.
+Finds the calls to the functions in `callNames`, like `expectError(…)` and `expectError<…>(…)`, in a file without a TypeScript parser, the `@ts-ignore` comments, the effective `@ts-nocheck` directive, and the modules it imports.
 
 A call that cannot be parsed is left out, so its diagnostics are reported as failures instead of being swallowed.
 */
@@ -453,6 +462,7 @@ export function scanSource(source, callNames) {
 	// The last two tokens that are not whitespace or a comment, to tell a module specifier from any other string.
 	let recentTokens = [];
 	let hasStatement = false;
+	let fileCheckDirective;
 	// Where the `(…)` head of an `if`, `while`, `for` or `with` ends.
 	const controlHeadEnds = new Set();
 
@@ -467,8 +477,10 @@ export function scanSource(source, callNames) {
 
 		const isCommentToken = isComment(source, index);
 		const directive = isCommentToken ? readDirective(source.slice(index, token.end), hasStatement) : undefined;
-		if (directive) {
+		if (directive === 'ignore') {
 			directives.push({start: index, name: directive});
+		} else if (directive) {
+			fileCheckDirective = {start: index, name: directive};
 		}
 
 		const isString = source[index] === '\'' || source[index] === '"';
@@ -509,6 +521,11 @@ export function scanSource(source, callNames) {
 		index = token.end;
 		// The head is followed by a statement, like a `;` is.
 		previous = controlHeadEnds.has(index) ? ';' : token.previous;
+	}
+
+	// Only the last `@ts-check` or `@ts-nocheck` takes effect, and only one that turns off the check is a failure.
+	if (fileCheckDirective?.name === 'nocheck') {
+		directives.push(fileCheckDirective);
 	}
 
 	return {calls, directives, imports};

@@ -1,27 +1,23 @@
 import path from 'node:path';
 import process from 'node:process';
-import {createRequire} from 'node:module';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {expectTypeOf, expectError} from '../source/index.js';
+// eslint-disable-next-line node-test/no-import-test-files -- The test command skips the files that start with `_`.
+import {typescript6, typescript7} from './_utilities.js';
 
 const execFileAsync = promisify(execFile);
-const require = createRequire(import.meta.url);
 
 const fixturesPath = path.join(import.meta.dirname, 'fixtures', 'assertions');
 
-const compilerPath = packageName => path.join(path.dirname(require.resolve(`${packageName}/package.json`)), 'bin/tsc');
-
-const typescript7 = compilerPath('@typescript/native');
-const typescript6 = compilerPath('typescript');
-
 const compilerFlags = ['--noEmit', '--ignoreConfig', '--pretty', 'false', '--strict', '--module', 'nodenext', '--target', 'esnext'];
 
-const compile = async (compiler, file, flags = []) => {
+// `files` is one file or a list of them.
+const compile = async (compiler, files, flags = []) => {
 	try {
-		await execFileAsync(process.execPath, [compiler, ...compilerFlags, ...flags, file], {cwd: fixturesPath});
+		await execFileAsync(process.execPath, [compiler, ...compilerFlags, ...flags, ...[files].flat()], {cwd: fixturesPath});
 		return '';
 	} catch (error) {
 		return error.stdout;
@@ -37,10 +33,31 @@ const summarize = output => output.split('\n').filter(line => /^\S/v.test(line))
 	return `${location} ${alias}`;
 });
 
+// The assertions that must pass. Most files also have `@ts-expect-error` comments on the ones that must fail, which are an error when nothing fails. They are compiled together, which takes a fraction of the time of one compiler run each.
+const passingFiles = [
+	'passing.ts',
+	'edge-cases.ts',
+	'assignable-constructors.ts',
+	'function-return-projections.ts',
+	'generic-normalization.ts',
+	'builtin-assignment-controls.ts',
+	'custom-thenables.ts',
+	'variadic-controls.ts',
+	'structural-identity.ts',
+	'modern-inference.ts',
+	'nullable-expected-guards.ts',
+];
+
 test('passing assertions report nothing on either TypeScript version', async () => {
 	// The readme says both versions are supported, so the assertions that must pass are checked on both, not only the ones that must fail.
-	assert.equal(await compile(typescript7, 'passing.ts'), '');
-	assert.equal(await compile(typescript6, 'passing.ts'), '');
+	assert.equal(await compile(typescript7, passingFiles), '');
+	assert.equal(await compile(typescript6, passingFiles), '');
+});
+
+test('expected types cannot bypass assertion constraints without `strictNullChecks`', async () => {
+	// Without it, `null` and `undefined` satisfy every constraint, like `any` and `never` do.
+	assert.equal(await compile(typescript7, 'nullable-expected-guards.ts', ['--strictNullChecks', 'false']), '');
+	assert.equal(await compile(typescript6, 'nullable-expected-guards.ts', ['--strictNullChecks', 'false']), '');
 });
 
 test('failure messages name the actual type', async () => {
@@ -66,6 +83,7 @@ failures.ts(31,39): error TS2344: Type 'string' does not satisfy the constraint 
 failures.ts(33,1): error TS2741: Property '[actualTypeIs]' is missing in type 'ExpectTypeOf<number>' but required in type 'ActualTypeIs<number>'.
 failures.ts(34,1): error TS2741: Property '[actualTypeIsNotAssignable]' is missing in type 'ExpectTypeOf<number>' but required in type 'ActualTypeIsNotAssignable<number>'.
 failures.ts(36,28): error TS2741: Property '[actualTypeIs]' is missing in type '{ actualTypeIs: number; }' but required in type 'ActualTypeIs<number>'.
+failures.ts(39,29): error TS2344: Type '(value: string) => void' does not satisfy the constraint 'ActualTypeIs<(this: Date, value: string) => void>'.
 `);
 });
 

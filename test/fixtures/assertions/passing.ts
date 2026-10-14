@@ -65,3 +65,14 @@ expectTypeOf<string>().not.toBe<number>();
 
 // A fresh literal widens, so this is a `string`.
 expectTypeOf('hello').toBe<string>();
+
+// TypeScript compares `this` parameters only when both functions have one, so a function with one is not identical to the same function without it.
+declare const withThis: (this: Date, value: string) => void;
+expectTypeOf(withThis).toBe<(this: Date, value: string) => void>();
+expectTypeOf(withThis).not.toBe<(value: string) => void>();
+expectTypeOf(greet).not.toBe<(this: Date, name: string) => string>();
+expectTypeOf(withThis).parameters.toBe<[value: string]>();
+declare const withVoidThis: (this: void) => void;
+expectTypeOf(withVoidThis).not.toBe<() => void>();
+declare const withThisOrString: ((this: Date) => void) | string;
+expectTypeOf(withThisOrString).not.toBe<(() => void) | string>();

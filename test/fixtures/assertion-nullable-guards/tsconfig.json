@@ -1,0 +1,8 @@
+{
+	"compilerOptions": {
+		"strict": true,
+		"strictNullChecks": false,
+		"module": "nodenext",
+		"target": "esnext"
+	}
+}

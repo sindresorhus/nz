@@ -1,0 +1,5 @@
+{
+	"name": "expect-error-nested-content",
+	"type": "module",
+	"types": "./index.d.ts"
+}

@@ -46,7 +46,7 @@ expectError(greet(1), 'not assignable to parameter of type');
 greet();
 ```
 
-Any type error is a failure, so plain type annotations and `// @ts-expect-error` comments work too, and `tsc` reports a `// @ts-expect-error` that is not needed. A `// @ts-ignore` in a test file, and a `// @ts-nocheck` in any checked file, are failures, because they hide failures without a trace.
+Any type error is a failure, so plain type annotations and `// @ts-expect-error` comments work too, and `tsc` reports a `// @ts-expect-error` that is not needed. A `// @ts-ignore` in a test file, and a `// @ts-nocheck` in a TypeScript file of the package that `tsc` reads, are failures, because they hide failures without a trace. Only the last leading `// @ts-check` or `// @ts-nocheck` of a file counts, like in TypeScript.
 
 ```text
 $ nz
@@ -69,18 +69,19 @@ Most terminals and editors turn `file:line:column` into a link. In GitHub Action
 4. The `.d.ts` file next to `main`.
 5. `index.d.ts`
 
-**Test files:** `*.test-d.ts` next to a declaration file, `test-d/**/*.ts`, and `typetests/**/*.ts`.
+**Test files:** `*.test-d.ts` next to a declaration file, `test-d/**/*.ts`, and `typetests/**/*.ts`. A file of the package that a test file imports is a test file too when it is a `*.test-d.ts` or `*.test-d.tsx` file, or a `.tsx` file in `test-d` or `typetests`.
 
 **With a `tsconfig.json`,** your options, `extends` chain and `paths` apply, so the types are checked the way the package builds them. It writes a config that extends yours and overrides only the file list. Your `types` applies, like with your own `tsc`; TypeScript defaults it to `[]`, so add `"types": ["node"]` for the Node.js globals and built-in modules. It forces a few options:
 
 - `--rootDir` the file system root, so an `outDir` cannot infer a `rootDir` that leaves out the checked files, and a test file can import from outside the package.
 - `--incremental false` and `--composite false`, so no build info is written to your package. `emitDeclarationOnly`, `declarationMap`, `isolatedDeclarations`, `declarationDir` and `mapRoot` are off too, because they are an error without the `declaration` that `composite` implied (`mapRoot` without `declarationMap`). Nothing is emitted, so they only matter for `isolatedDeclarations`, which would check what a test file exports.
 - `--noCheck false`, because checking is the point.
+- `diagnostics`, `extendedDiagnostics`, `traceResolution` and `explainFiles` are off, so compiler debugging output does not become a type test failure.
 
 **Without a `tsconfig.json`,** it runs this in the package root:
 
 ```sh
-tsc --noEmit --pretty false --locale en --noErrorTruncation \
+tsc --noEmit --listFiles --pretty false --locale en --noErrorTruncation \
 	--types node \
 	--ignoreConfig --strict \
 	--module nodenext --moduleResolution nodenext \
@@ -93,7 +94,7 @@ tsc --noEmit --pretty false --locale en --noErrorTruncation \
 **In both cases:**
 
 - The config and the type check file are written to a temporary directory in `node_modules/.cache`, in the first `node_modules` from the package up, and removed afterwards (not when the run is killed). From there, TypeScript finds the same `types` and packages as from your package. When there is no `node_modules` in the package or above it, one is made in the package and stays there, like the `.cache` directory.
-- Errors in `node_modules`, and in other files outside the package, like a symlinked workspace package, are ignored.
+- Errors in files in `node_modules`, and in other files outside the package, like a symlinked workspace package, are ignored. `--listFiles` is passed to tell which files those are, so an error in something that is not one of the files, like a config the package config extends, is still a failure.
 - `--noErrorTruncation` is passed, so a failure shows the whole type.
 - A syntax error anywhere, or some errors in the compiler options, make `tsc` skip the type check. A type check file with one known type error finds this. Then that is a failure, every error is a failure (also in `node_modules`), and none satisfies an `expectError()` call, so the run can never pass with nothing checked.
 
@@ -165,7 +166,7 @@ For an overloaded function, this is the return type of the last overload. For a 
 
 The parameter types of the function, as a tuple.
 
-For an overloaded function, these are the parameters of the last overload. It is `unknown[]` for `any`, and `never` if the type is not a function.
+For an overloaded function, these are the parameters of the last overload. For a union, only its function members count. It is `unknown[]` for `any`, and `never` if the type is not a function.
 
 #### .resolves
 
@@ -179,7 +180,7 @@ For an overloaded `then` method, only the last overload counts, which can differ
 
 Assert that `value` causes a type error.
 
-It passes when there is at least one type error in its type argument or inside its parentheses, and fails with `Expected an error, but found none.` otherwise. Any error code counts, except an error for a name that does not exist, which is a typo in the test. When a syntax error or an error in the compiler options made `tsc` skip the type check, no error counts.
+It passes when there is at least one type error in its type argument or inside its parentheses, and fails with `Expected an error, but found none.` otherwise. Any error code counts, except an error for a name that does not exist or an unused `@ts-expect-error` directive, which are mistakes in the test. When a syntax error or an error in the compiler options made `tsc` skip the type check, no error counts.
 
 With a `message`, only an error whose message includes it passes the assertion, so a test cannot pass because of a different error. An error inside the call that does not include it is reported, so the failure shows what the error was. The message has to be one string literal, because it is read from the source. Anything else, like a variable, is not read, and the call then takes any error. Control characters in an unmatched message are displayed as visible `\uXXXX` escapes.
 
@@ -237,9 +238,11 @@ TypeScript 6 runs in Node.js, and the compiler gets a heap of 8 GB instead of th
 - With a `tsconfig.json`, the options under [what it checks](#what-it-checks) are overridden, and `files`/`include` is not used.
 - Project references (`references`) are not carried over from `tsconfig.json`. An import can resolve to a referenced project's source instead of its built declarations. Import built declaration entry points when testing a referenced project.
 - Without a `tsconfig.json`, only the `@types/node` globals are available, because `types` is set. Import from the package instead.
+- Without a `tsconfig.json`, the files are passed to `tsc` on the command line as absolute paths, which Windows limits to 32,767 characters, so a package with many hundreds of test files needs a `tsconfig.json`.
 - A `node_modules` that cannot be written to.
 - `${configDir}` is the temporary directory in `node_modules/.cache`, not the package root, because TypeScript sets it to the config's directory. A `paths` entry that uses it does not resolve, nor does a relative `types` entry like `./typings/globals`.
 - `skipLibCheck` is honored, so turning it on in `tsconfig.json` skips checking your declaration files.
+- A `// @ts-nocheck` in a JavaScript file is not reported, because whether the file is type checked depends on `checkJs`.
 - `--show-config` prints the temporary config as `../` chains and names temporary files that are removed afterwards; TypeScript 6 also prints `declarationDir` although it is off.
 - `.tsx` test files, and subpath patterns in `exports` (`"./*": {"types": "./*.d.ts"}`). Import such files from a test file.
 
@@ -251,12 +254,13 @@ TypeScript 6 runs in Node.js, and the compiler gets a heap of 8 GB instead of th
 **`expectError()`**
 
 - The calls are found without a TypeScript parser. A call inside a template literal is not found, and a call after `>`, `*` or `void` that is directly followed by `:`, like `condition ? () => expectError(value) : other`, reads as a method with a return type. A call that cannot be read reports its errors, never silently passes; one that is not found and has no error inside passes.
+- Assertion scanning in imported TSX files is best-effort because JSX text is not parsed. Keep `expectError()` and unchecked `tsd` calls in the importing `.test-d.ts` file for reliable checking.
 - The `expectType` and `expectAssignable` assertions from `tsd` only check assignability here, because `tsd` does the exact check itself. Use `expectTypeOf(value).toBe<Type>()`. The `tsd` assertions that take any value, like `expectNotType` and `printType`, pass with `tsc` whatever the type is, so in a file that imports `tsd`, a call by one of their names is a failure. The calls are found by name, so one through an alias or a namespace is not found, and a function of the test with the same name is reported.
 
 **`expectTypeOf()`**
 
 - Two structurally identical types are identical, also different classes. An intersection is not identical to the type it flattens into, an enum is not identical to the union of its members, and `new () => T` is identical to `abstract new () => T`, although `toBeAssignableTo()` does not accept the abstract one for the other.
-- A `this` parameter that only one side has is only compared for the function itself, not for a function inside the type, like in a property, a method, a parameter, or a return type, nor in a union that also has a function without a `this` parameter. For an overloaded function, it is only compared for the last overload. A `this` parameter of type `unknown`, or of a type parameter of a generic function, is the same as none.
+- A `this` parameter that only one side has is only compared for the function itself, not for a function inside the type, like in a property, a method, a parameter, or a return type, nor in a union that also has a function without a `this` parameter. For an overloaded function, it is only compared for the last overload. A `this` parameter of type `unknown`, or of an unconstrained type parameter of a generic function, is the same as none. One of a constrained type parameter is its constraint.
 - For an overloaded function, `returns` and `parameters` are those of the last overload. Generic type parameters are inferred from their constraints, or as `unknown` when unconstrained. When that does not match the function, like a return type of `keyof T` for a constrained `T`, `returns` is `never`. For a union, only its function members count. To test another overload, call the function, like `expectTypeOf(convert(1)).toBe<string>()`, and give a generic function its type arguments, like `expectTypeOf(identity<string>).returns.toBe<string>()`.
 - A fresh literal widens, so `expectTypeOf('hello')` is a `string`. Declare the value with a literal type first.
 - `.not.toBe()` and `.not.toBeAssignableTo()` without a type argument pass, because no default fails for every type.

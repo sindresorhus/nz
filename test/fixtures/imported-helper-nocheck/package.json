@@ -1,0 +1,5 @@
+{
+	"type": "module",
+	"types": "./index.d.ts",
+	"files": ["index.d.ts"]
+}
