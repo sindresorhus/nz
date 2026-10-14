@@ -65,7 +65,9 @@ type ParametersOf<Type> = Type extends (...arguments_: infer Parameters) => any 
 // `never` for a type that is not a function, so in a union, only the functions count. The members that are not functions are left out before the `infer`, which is much slower for each member of a large union.
 type ThisParameterOf<Type> = Type extends (...arguments_: never) => unknown ? (Type extends (this: infer This, ...arguments_: never) => any ? This : never) : never;
 
-type ResolvedTypeOf<Type> = Type extends PromiseLike<unknown> ? Awaited<Type> : never;
+// Thenables do not need to return another promise from their `then` method.
+// eslint-disable-next-line @typescript-eslint/no-restricted-types -- Match Awaited's object guard, which includes class instances and callable objects.
+type ResolvedTypeOf<Type> = Type extends object & {then: (...arguments_: never) => unknown} ? Awaited<Type> : never;
 
 /*
 Named, so that a failure message names it instead of printing the whole signature, like `Negated<number>` when the check is repeated on `this` for `any` and `never`. runner.js reads the names `ExpectTypeOf` and `Negated` to tell that case apart. Do not rename them.
@@ -138,9 +140,11 @@ export type ExpectTypeOf<Actual> = {
 	parameters: ExpectTypeOf<ParametersOf<Actual>>;
 
 	/**
-	The type that the promise resolves to.
+	The type that a promise or thenable resolves to, recursively unwrapped using TypeScript's `Awaited` utility.
 
-	For a union, like `Promise<string> | undefined`, it is the resolved type of the promises in it. It is `any` for `any`, and `never` if the type is not a promise.
+	For a union, like `Promise<string> | undefined`, only its promises and thenables count. It is `any` for `any`, and `never` if the type is not a promise or thenable.
+
+	For an overloaded `then` method, only the last overload counts, which can differ from the type of an `await` expression.
 
 	@example
 	```

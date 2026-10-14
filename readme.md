@@ -169,9 +169,11 @@ For an overloaded function, these are the parameters of the last overload. It is
 
 #### .resolves
 
-The type that the promise resolves to.
+The type that a promise or thenable resolves to, recursively unwrapped using TypeScript's `Awaited` utility.
 
-For a union, like `Promise<string> | undefined`, it is the resolved type of the promises in it. It is `any` for `any`, and `never` if the type is not a promise.
+For a union, like `Promise<string> | undefined`, only its promises and thenables count. It is `any` for `any`, and `never` if the type is not a promise or thenable.
+
+For an overloaded `then` method, only the last overload counts, which can differ from the type of an `await` expression.
 
 ### expectError(value, message?)
 
