@@ -50,6 +50,13 @@ declare const identity: <Type>(value: Type) => Type;
 expectTypeOf(identity).toBe<<Type>(value: Type) => Type>();
 expectError(expectTypeOf(identity).toBe<<Type>(value: Type) => string>());
 
+// The `this` parameter of a function.
+declare const withThis: (this: Date, value: string) => void;
+expectTypeOf(withThis).toBe<(this: Date, value: string) => void>();
+expectTypeOf(withThis).not.toBe<(value: string) => void>();
+expectError(expectTypeOf(withThis).toBe<(value: string) => void>());
+expectError(expectTypeOf(greet).toBe<(this: Date, name: string) => string>());
+
 // `not.toBe()`
 expectTypeOf(greet).not.toBe<(name: number) => string>();
 expectTypeOf(aNumber).not.toBe<any>();

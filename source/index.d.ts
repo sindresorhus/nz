@@ -36,16 +36,19 @@ type IsEqual<Left, Right> =
 
 type IsAnyOrNever<Type> = [Type] extends [never] ? true : 0 extends 1 & Type ? true : false;
 
-type ToBe<Actual, Expected> = IsEqual<Actual, Expected> extends true ? unknown : ActualTypeIs<Actual>;
+// TypeScript compares `this` parameters only when both functions have one, so the `this` parameter of the function itself is compared separately.
+type IsIdentical<Actual, Expected> = IsEqual<Actual, Expected> extends true ? IsEqual<ThisParameterOf<Actual>, ThisParameterOf<Expected>> : false;
 
-type NotToBe<Actual, Expected> = IsEqual<Actual, Expected> extends true ? ActualTypeIsIdentical<Actual> : unknown;
+type ToBe<Actual, Expected> = IsIdentical<Actual, Expected> extends true ? unknown : ActualTypeIs<Actual>;
+
+type NotToBe<Actual, Expected> = IsIdentical<Actual, Expected> extends true ? ActualTypeIsIdentical<Actual> : unknown;
 
 // `any` and `never` are assignable to almost everything, which is how an accidental one passes unnoticed, so here they are only assignable to themselves. Identical types come first, because TypeScript can tell that also for a type parameter, like `this` in a class, where it cannot tell whether the type is `any` or `never`.
 type IsAssignable<Actual, Expected> = IsEqual<Actual, Expected> extends true ? true : IsAnyOrNever<Actual> extends true ? false : [Actual] extends [Expected] ? true : false;
 
 type ToBeAssignableTo<Actual, Expected> = IsAssignable<Actual, Expected> extends true ? unknown : ActualTypeIsNotAssignable<Actual>;
 
-// The check is a separate type, like `IsEqual` in `NotToBe`, because with the failure in the true branch of `[Actual] extends [Expected]` itself, the constraint is circular and TypeScript never checks it.
+// The check is a separate type, like `IsIdentical` in `NotToBe`, because with the failure in the true branch of `[Actual] extends [Expected]` itself, the constraint is circular and TypeScript never checks it.
 type NotToBeAssignableTo<Actual, Expected> = IsAssignable<Actual, Expected> extends true ? ActualTypeIsAssignable<Actual> : unknown;
 
 // `any` and `never` satisfy every constraint, so for them the check is repeated on `this`, which they cannot bypass.
@@ -54,6 +57,9 @@ type AnyOrNeverGuard<Expected, Check> = IsAnyOrNever<Expected> extends true ? Ch
 type ReturnTypeOf<Type> = Type extends (...arguments_: any) => infer Return ? Return : never;
 
 type ParametersOf<Type> = Type extends (...arguments_: infer Parameters) => any ? Parameters : never;
+
+// `never` for a type that is not a function, so in a union, only the functions count. The members that are not functions are left out before the `infer`, which is much slower for each member of a large union.
+type ThisParameterOf<Type> = Type extends (...arguments_: never) => unknown ? (Type extends (this: infer This, ...arguments_: never) => any ? This : never) : never;
 
 type ResolvedTypeOf<Type> = Type extends PromiseLike<unknown> ? Awaited<Type> : never;
 
@@ -144,7 +150,7 @@ export type ExpectTypeOf<Actual> = {
 	/**
 	Assert that the type is identical to `Expected`.
 
-	`any`, `unknown`, and `never` are only identical to themselves, so `toBe<string>()` catches an accidental `any`. `readonly` and optional modifiers must match.
+	`any`, `unknown`, and `never` are only identical to themselves, so `toBe<string>()` catches an accidental `any`. `readonly` and optional modifiers must match, and so must the `this` parameter of a function.
 
 	Without a type argument, the expected type is `never`, so the assertion fails for every other type.
 
