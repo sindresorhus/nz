@@ -914,6 +914,43 @@ test('compares the exports of an entry point from `types` and `main`, and of a `
 	]);
 });
 
+for (const directory of ['@lib', '-lib']) {
+	test(`compares the exports of an entry point whose path starts with a character that \`tsc\` reads as a flag: ${directory}`, async () => {
+		// The JavaScript file is an argument of `tsc`, which reads one that starts with `@` as a response file, and one that starts with `-` as an option.
+		const files = {
+			'package.json': JSON.stringify({type: 'module', main: `./${directory}/index.js`, types: `./${directory}/index.d.ts`}),
+			[`${directory}/index.d.ts`]: 'export const value: number;\nexport const missing: number;\n',
+			[`${directory}/index.js`]: 'export const value = 1;\n',
+			[`${directory}/index.test-d.ts`]: 'export {};\n',
+		};
+
+		await withTemporaryPackage(files, async packageDirectory => {
+			assert.deepEqual(await failureLines(packageDirectory, {compilerPath: typescript7}), [
+				`${directory}/index.d.ts:1:1  Exports values that ${directory}/index.js does not export, so importing them throws at runtime: missing.`,
+			]);
+		});
+	});
+}
+
+test('writes the declarations for the comparison of exports only to the temporary directory', async () => {
+	// TypeScript writes the declarations of a JavaScript file outside `rootDir` next to the file, and a JavaScript file that the entry point imports from outside the package is in the program too.
+	const files = {
+		'package/package.json': JSON.stringify({type: 'module', main: './index.js', types: './index.d.ts'}),
+		'package/index.d.ts': 'export const value: number;\nexport const missing: number;\n',
+		'package/index.js': 'export {value} from \'../sibling/index.js\';\n',
+		'package/index.test-d.ts': 'export {};\n',
+		'sibling/index.js': 'export const value = 1;\n',
+	};
+
+	await withTemporaryPackage(files, async directory => {
+		const expected = ['index.d.ts:1:1  Exports values that index.js does not export, so importing them throws at runtime: missing.'];
+		assert.deepEqual(await failureLines(path.join(directory, 'package'), {compilerPath: typescript7}), expected);
+		assert.deepEqual(fs.readdirSync(path.join(directory, 'sibling')), ['index.js']);
+		assert.deepEqual(await failureLines(path.join(directory, 'package'), {compilerPath: typescript6}), expected);
+		assert.deepEqual(fs.readdirSync(path.join(directory, 'sibling')), ['index.js']);
+	});
+});
+
 test('type checks the package when the declarations written for the comparison are broken', async () => {
 	// TypeScript 7 writes a syntax error for a property set on a default export class, and a syntax error anywhere stops the type check. The comparison is left out then, so the package is still checked.
 	assert.deepEqual(await failureLines('runtime-exports-broken-emit'), [

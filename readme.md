@@ -2,7 +2,7 @@
 
 > Zero-config type tests for packages with hand-written declaration files
 
-It type checks your package's declaration files and type test files, using your own `tsc`, and reports the errors. It also checks the package for mistakes that break its types for users, and has small type assertions with failure messages that name the actual type.
+It type checks your package's declaration files and type test files with your own `tsc`. It also finds package mistakes that break the types for users, and has small type assertions whose failure messages name the actual type.
 
 It runs the `tsc` binary and reads its output, so it works with TypeScript 7, which has no JavaScript compiler API.
 
@@ -46,7 +46,7 @@ expectError(greet(1), 'not assignable to parameter of type');
 greet();
 ```
 
-Any type error is a failure, so plain type annotations and `// @ts-expect-error` comments work too, and `tsc` reports a `// @ts-expect-error` that is not needed. A `// @ts-ignore` in a test file, and a `// @ts-nocheck` in a TypeScript file of the package that `tsc` reads, are failures, because they hide failures without a trace. Only the last leading `// @ts-check` or `// @ts-nocheck` of a file counts, like in TypeScript.
+Any type error is a failure, so plain type annotations and `// @ts-expect-error` work too, and `tsc` reports an unneeded `// @ts-expect-error`. A `// @ts-ignore` in a test file, and a `// @ts-nocheck` in a TypeScript file of the package that `tsc` reads, are failures, because they hide failures. Only the last leading `// @ts-check` or `// @ts-nocheck` of a file counts, like in TypeScript.
 
 ```text
 $ nz
@@ -57,7 +57,7 @@ index.test-d.ts:8:1  error TS2578: Unused '@ts-expect-error' directive.
 3 failures
 ```
 
-Most terminals and editors turn `file:line:column` into a link. In GitHub Actions, they are also annotations on the failing lines of a pull request.
+Most terminals and editors turn `file:line:column` into a link. In GitHub Actions, failures are also annotations on the pull request.
 
 ## What it checks
 
@@ -69,14 +69,14 @@ Most terminals and editors turn `file:line:column` into a link. In GitHub Action
 4. The `.d.ts` file next to `main`.
 5. `index.d.ts`
 
-**Test files:** `*.test-d.ts` next to a declaration file, `test-d/**/*.ts`, and `typetests/**/*.ts`. A file of the package that a test file imports is a test file too when it is a `*.test-d.ts` or `*.test-d.tsx` file, or a `.tsx` file in `test-d` or `typetests`.
+**Test files:** `*.test-d.ts` next to a declaration file, `test-d/**/*.ts`, and `typetests/**/*.ts`. An imported `*.test-d.ts` or `*.test-d.tsx` file of the package, or a `.tsx` file in `test-d` or `typetests`, is a test file too.
 
-**With a `tsconfig.json`,** your options, `extends` chain and `paths` apply, so the types are checked the way the package builds them. It writes a config that extends yours and overrides only the file list. Your `types` applies, like with your own `tsc`; TypeScript defaults it to `[]`, so add `"types": ["node"]` for the Node.js globals and built-in modules. It forces a few options:
+**With a `tsconfig.json`,** your options, `extends` chain and `paths` apply, so the types are checked the way the package builds them. It writes a config that extends yours and overrides only the file list. Your `types` applies too. TypeScript defaults it to `[]`, so add `"types": ["node"]` for the Node.js globals and built-in modules. These options are forced:
 
 - `--rootDir` the file system root, so an `outDir` cannot infer a `rootDir` that leaves out the checked files, and a test file can import from outside the package.
-- `--incremental false` and `--composite false`, so no build info is written to your package. `emitDeclarationOnly`, `declarationMap`, `isolatedDeclarations`, `declarationDir` and `mapRoot` are off too, because they are an error without the `declaration` that `composite` implied (`mapRoot` without `declarationMap`). Nothing is emitted, so they only matter for `isolatedDeclarations`, which would check what a test file exports.
+- `--incremental false` and `--composite false`, so no build info is written. `emitDeclarationOnly`, `declarationMap`, `isolatedDeclarations`, `declarationDir` and `mapRoot` are off too, because they are an error without the `declaration` that `composite` implied. Nothing is emitted, so of these, only `isolatedDeclarations` matters, and it would check what a test file exports.
 - `--noCheck false`, because checking is the point.
-- `diagnostics`, `extendedDiagnostics`, `traceResolution` and `explainFiles` are off, so compiler debugging output does not become a type test failure.
+- `diagnostics`, `extendedDiagnostics`, `traceResolution` and `explainFiles` are off, so debugging output does not become a failure.
 
 **Without a `tsconfig.json`,** it runs this in the package root:
 
@@ -89,21 +89,21 @@ tsc --noEmit --listFiles --pretty false --locale en --noErrorTruncation \
 	<declaration files> <test files> <type check file>
 ```
 
-`--ignoreConfig` ignores a `tsconfig.json` in a parent directory, like the root of a monorepo. Your declaration files are checked without `skipLibCheck`. `--types node` is passed when `@types/node` is installed, so `@types/node` is the only `@types` package loaded on its own.
+`--ignoreConfig` ignores a `tsconfig.json` in a parent directory, like the root of a monorepo. Your declaration files are checked without `skipLibCheck`. `--types node` is passed when `@types/node` is installed, so it is the only `@types` package loaded on its own.
 
 **In both cases:**
 
-- The config and the type check file are written to a temporary directory in `node_modules/.cache`, in the first `node_modules` from the package up, and removed afterwards (not when the run is killed). From there, TypeScript finds the same `types` and packages as from your package. When there is no `node_modules` in the package or above it, one is made in the package and stays there, like the `.cache` directory.
-- Errors in files in `node_modules`, and in other files outside the package, like a symlinked workspace package, are ignored. `--listFiles` is passed to tell which files those are, so an error in something that is not one of the files, like a config the package config extends, is still a failure.
+- The config and the type check file go in a temporary directory in `.cache` in the first `node_modules` from the package up, and are removed afterwards (not when the run is killed). From there, TypeScript finds the same `types` and packages as from your package. When there is no `node_modules`, one is made in the package and stays.
+- Errors in `node_modules` and in other files outside the package, like a symlinked workspace package, are ignored. `--listFiles` tells which files those are, so an error elsewhere, like in a config that yours extends, is still a failure.
 - `--noErrorTruncation` is passed, so a failure shows the whole type.
-- A syntax error anywhere, or some errors in the compiler options, make `tsc` skip the type check. A type check file with one known type error finds this. Then that is a failure, every error is a failure (also in `node_modules`), and none satisfies an `expectError()` call, so the run can never pass with nothing checked.
+- A syntax error anywhere, or some errors in the compiler options, make `tsc` skip the type check. A type check file with one known type error detects this. Then the skip is a failure, every error is a failure (also in `node_modules`), and none satisfies an `expectError()` call, so the run never passes with nothing checked.
 
 ## Package checks
 
 It also reports mistakes that type check in the package, but break the types for users:
 
-- **A value that a declaration file exports and the JavaScript file does not.** Importing it type checks, and throws at runtime. For each ES module entry point (a `types` condition with an `import`, `node` or `default` JavaScript file next to it, or else `types` or `typings` with `main`, a string `exports`, or `index.js`), TypeScript writes declarations for the JavaScript file in a separate run, and the value names are compared. The comparison is skipped when it cannot run, like for a declaration file that only declares globals.
-- **A package that a declaration file imports, which is not in `dependencies`, `peerDependencies` or `optionalDependencies`.** Built-in modules, the package itself, and a package whose `@types` package is listed are fine. The declaration files they import are checked too.
+- **A value that a declaration file exports and the JavaScript file does not.** Importing it type checks, and throws at runtime. For each ES module entry point (a `types` condition with an `import`, `node` or `default` JavaScript file next to it, or else `types` or `typings` with `main`, a string `exports`, or `index.js`), the value names are compared with the declarations TypeScript writes for the JavaScript file. When the comparison cannot run, like for a declaration file that only declares globals, it is skipped.
+- **A package that a declaration file imports, which is not in `dependencies`, `peerDependencies` or `optionalDependencies`.** Built-in modules, the package itself, and a package with a listed `@types` package are fine. The declaration files they import are checked too.
 - **`types` after `default`, `import`, `require` or `node`** in `exports`. TypeScript only finds it through a fallback.
 - **A `types` file of another format than a JavaScript file next to it,** like one `.d.ts` for both `import` and `require`.
 - **A declaration file that `files` in package.json leaves out.**
@@ -180,19 +180,19 @@ For an overloaded `then` method, only the last overload counts, which can differ
 
 Assert that `value` causes a type error.
 
-It passes when there is at least one type error in its type argument or inside its parentheses, and fails with `Expected an error, but found none.` otherwise. Any error code counts, except an error for a name that does not exist or an unused `@ts-expect-error` directive, which are mistakes in the test. When a syntax error or an error in the compiler options made `tsc` skip the type check, no error counts.
+It passes when there is at least one type error in its type argument or parentheses, and fails with `Expected an error, but found none.` otherwise. Any error counts, except one for a name that does not exist or an unused `@ts-expect-error` directive, which are mistakes in the test. When `tsc` skipped the type check, no error counts.
 
-With a `message`, only an error whose message includes it passes the assertion, so a test cannot pass because of a different error. An error inside the call that does not include it is reported, so the failure shows what the error was. The message has to be one string literal, because it is read from the source. Anything else, like a variable, is not read, and the call then takes any error. Control characters in an unmatched message are displayed as visible `\uXXXX` escapes.
+With a `message`, only an error whose message includes it passes, so a test cannot pass because of a different error. Another error inside the call is reported, so the failure shows what it was. The message must be one string literal, because it is read from the source. Anything else, like a variable, is ignored, and the call then takes any error. Control characters in an unmatched message are shown as `\uXXXX` escapes.
 
 ```ts
 expectError(greet(1), 'not assignable to parameter of type');
 ```
 
-This needs the `nz` CLI, which matches type errors to the `expectError()` calls. The calls are found by name, so the `expectError` from `tsd` works too. With plain `tsc`, every type error fails, so use a `// @ts-expect-error` comment instead.
+This needs the `nz` CLI, which matches type errors to the calls. The calls are found by name, so `expectError` from `tsd` works too. With plain `tsc`, use a `// @ts-expect-error` comment instead.
 
 ### Failure messages
 
-The CLI describes a failed assertion in one line, the same on TypeScript 6 and 7, with the expected type as you wrote it. Control characters in assertion descriptions are displayed as visible `\uXXXX` escapes:
+The CLI describes a failed assertion in one line, the same on TypeScript 6 and 7, with the expected type as you wrote it, and control characters as `\uXXXX` escapes:
 
 ```text
 index.test-d.ts:4:26  Expected type 'string', but the actual type is 'number'.
@@ -216,7 +216,7 @@ There, the first type is the expected type as TypeScript prints it, which widens
 
 It uses the `typescript` package your package resolves, and never downloads one. It needs 6.0 or later, for `--ignoreConfig`, and is tested with 6 and 7.
 
-TypeScript 7 does not work with `typescript-eslint` (and so `xo`) yet, so TypeScript recommends [installing both](https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/#running-side-by-side-with-typescript-6.0), with 7 as `@typescript/native`. When installed, it replaces `typescript`.
+TypeScript 7 does not work with `typescript-eslint` (and so `xo`) yet, so TypeScript recommends [installing both](https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/#running-side-by-side-with-typescript-6.0), with 7 as `@typescript/native`. `nz` uses `@typescript/native` when it is installed.
 
 ```json
 {
@@ -227,7 +227,7 @@ TypeScript 7 does not work with `typescript-eslint` (and so `xo`) yet, so TypeSc
 }
 ```
 
-TypeScript 6 runs in Node.js, and the compiler gets a heap of 8 GB instead of the default of about 4 GB, because a large package like `type-fest` needs more. Raise it with `NODE_OPTIONS=--max-old-space-size=16384 nz`. The compiler runs in its own process, so `node --max-old-space-size=16384 nz` does not work. TypeScript 7 is native and has no such limit.
+TypeScript 6 runs in Node.js, and gets a heap of 8 GB instead of the default of about 4 GB, because a large package like `type-fest` needs more. Raise it with `NODE_OPTIONS=--max-old-space-size=16384 nz`. `node --max-old-space-size=16384 nz` does not work, because the compiler runs in its own process. TypeScript 7 is native and has no such limit.
 
 ## Limitations
 
@@ -236,14 +236,14 @@ TypeScript 6 runs in Node.js, and the compiler gets a heap of 8 GB instead of th
 - No settings of its own. Put compiler options, like `exactOptionalPropertyTypes`, in your `tsconfig.json`.
 - A `tsconfig.json` replaces the whole default option set, so a package that only wants `paths` must also set `module` and `moduleResolution` to `nodenext`.
 - With a `tsconfig.json`, the options under [what it checks](#what-it-checks) are overridden, and `files`/`include` is not used.
-- Project references (`references`) are not carried over from `tsconfig.json`. An import can resolve to a referenced project's source instead of its built declarations. Import built declaration entry points when testing a referenced project.
+- Project references (`references`) are not carried over, so an import can resolve to a referenced project's source instead of its built declarations. Import its built declaration entry points instead.
 - Without a `tsconfig.json`, only the `@types/node` globals are available, because `types` is set. Import from the package instead.
-- Without a `tsconfig.json`, the files are passed to `tsc` on the command line as absolute paths, which Windows limits to 32,767 characters, so a package with many hundreds of test files needs a `tsconfig.json`.
+- Without a `tsconfig.json`, the files are passed to `tsc` as absolute paths, and Windows limits a command line to 32,767 characters, so a package with many hundreds of test files needs a `tsconfig.json`.
 - A `node_modules` that cannot be written to.
 - `${configDir}` is the temporary directory in `node_modules/.cache`, not the package root, because TypeScript sets it to the config's directory. A `paths` entry that uses it does not resolve, nor does a relative `types` entry like `./typings/globals`.
 - `skipLibCheck` is honored, so turning it on in `tsconfig.json` skips checking your declaration files.
 - A `// @ts-nocheck` in a JavaScript file is not reported, because whether the file is type checked depends on `checkJs`.
-- `--show-config` prints the temporary config as `../` chains and names temporary files that are removed afterwards; TypeScript 6 also prints `declarationDir` although it is off.
+- `--show-config` prints the temporary config as `../` chains and names temporary files that are removed afterwards. TypeScript 6 also prints `declarationDir`, although it is off.
 - `.tsx` test files, and subpath patterns in `exports` (`"./*": {"types": "./*.d.ts"}`). Import such files from a test file.
 
 **Package checks**
@@ -253,9 +253,9 @@ TypeScript 6 runs in Node.js, and the compiler gets a heap of 8 GB instead of th
 
 **`expectError()`**
 
-- The calls are found without a TypeScript parser. A call inside a template literal is not found, and a call after `>`, `*` or `void` that is directly followed by `:`, like `condition ? () => expectError(value) : other`, reads as a method with a return type. A call that cannot be read reports its errors, never silently passes; one that is not found and has no error inside passes.
-- Assertion scanning in imported TSX files is best-effort because JSX text is not parsed. Keep `expectError()` and unchecked `tsd` calls in the importing `.test-d.ts` file for reliable checking.
-- The `expectType` and `expectAssignable` assertions from `tsd` only check assignability here, because `tsd` does the exact check itself. Use `expectTypeOf(value).toBe<Type>()`. The `tsd` assertions that take any value, like `expectNotType` and `printType`, pass with `tsc` whatever the type is, so in a file that imports `tsd`, a call by one of their names is a failure. The calls are found by name, so one through an alias or a namespace is not found, and a function of the test with the same name is reported.
+- The calls are found without a TypeScript parser. A call inside a template literal is not found, and a call after `>`, `*` or `void` that is directly followed by `:`, like `condition ? () => expectError(value) : other`, reads as a method with a return type. A call that cannot be read reports its errors and never silently passes, but one that is not found and has no error inside passes.
+- In imported `.tsx` files, finding calls is best-effort, because JSX is not parsed. Keep `expectError()` and unchecked `tsd` calls in a `.test-d.ts` file.
+- The `expectType` and `expectAssignable` assertions from `tsd` only check assignability here, because `tsd` does the exact check itself. Use `expectTypeOf(value).toBe<Type>()`. The `tsd` assertions that take any value, like `expectNotType` and `printType`, always pass with `tsc`, so in a file that imports `tsd`, a call to one of them is a failure. They are found by name, so a call through an alias or a namespace is not found, and a test function with the same name is reported.
 
 **`expectTypeOf()`**
 
@@ -264,7 +264,7 @@ TypeScript 6 runs in Node.js, and the compiler gets a heap of 8 GB instead of th
 - For an overloaded function, `returns` and `parameters` are those of the last overload. Generic type parameters are inferred from their constraints, or as `unknown` when unconstrained. When that does not match the function, like a return type of `keyof T` for a constrained `T`, `returns` is `never`. For a union, only its function members count. To test another overload, call the function, like `expectTypeOf(convert(1)).toBe<string>()`, and give a generic function its type arguments, like `expectTypeOf(identity<string>).returns.toBe<string>()`.
 - A fresh literal widens, so `expectTypeOf('hello')` is a `string`. Declare the value with a literal type first.
 - `.not.toBe()` and `.not.toBeAssignableTo()` without a type argument pass, because no default fails for every type.
-- Inside a generic function or class, the actual type is a type parameter, so the `not` assertions fail, and so does `toBeAssignableTo()` for a type that is not identical: TypeScript cannot resolve them.
+- Inside a generic function or class, the actual type is a type parameter, which TypeScript cannot resolve, so the `not` assertions fail, and so does `toBeAssignableTo()` for a type that is not identical.
 - Method parameters are checked bivariantly in `toBeAssignableTo()`, like in TypeScript.
 - There are no matchers for properties or specific kinds of types. Use `toBe()` with the full type.
 - When the expected type satisfies a failed assertion's constraint, the failure is reported at the start of the expression. The CLI calls it “the type argument”, and says that it is `never` without one, because TypeScript's message does not name the expected type.

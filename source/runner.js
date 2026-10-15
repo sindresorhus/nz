@@ -619,6 +619,8 @@ An entry point whose JavaScript file re-exports everything (`export *`) is left 
 async function writeRuntimeExportChecks(command, entryPoints) {
 	const {root, compilerPath, temporaryDirectory, typeCheckPath} = command;
 	const outputDirectory = path.join(temporaryDirectory, 'runtime');
+	// TypeScript writes the declarations of a JavaScript file outside `rootDir` next to the file, where they are left behind, and the program can have one from outside the package, like one that an entry point imports. With the root of the file system, each one is written to the output directory, at its absolute path. That path has the package path in it twice, so for a package path of about 500 characters, it is too long, and the comparison is left out.
+	const rootDirectory = path.parse(root).root;
 	const checks = new Map();
 
 	if (entryPoints.length === 0) {
@@ -630,14 +632,15 @@ async function writeRuntimeExportChecks(command, entryPoints) {
 			root,
 			compilerPath,
 			compilerArguments: [
-				...new Set(entryPoints.map(({javaScriptFile}) => path.normalize(javaScriptFile))),
+				// Absolute, so a file name that starts with `@` or `-` is not read as a response file or an option.
+				...new Set(entryPoints.map(({javaScriptFile}) => path.resolve(root, javaScriptFile))),
 				'--allowJs',
 				'--declaration',
 				'--emitDeclarationOnly',
 				'--noCheck',
 				...defaultCompilerArguments,
 				'--rootDir',
-				root,
+				rootDirectory,
 				'--outDir',
 				outputDirectory,
 				'--pretty',
@@ -654,7 +657,7 @@ async function writeRuntimeExportChecks(command, entryPoints) {
 
 	const lines = ['declare function exportsMissingAtRuntime<Names extends never>(): void;'];
 	for (const [index, entryPoint] of entryPoints.entries()) {
-		const outputFile = path.join(outputDirectory, entryPoint.javaScriptFile).replace(/\.(?<format>m?)js$/v, '.d.$<format>ts');
+		const outputFile = path.join(outputDirectory, path.relative(rootDirectory, path.resolve(root, entryPoint.javaScriptFile))).replace(/\.(?<format>m?)js$/v, '.d.$<format>ts');
 		if (!fs.existsSync(outputFile) || /^export \* from /mv.test(fs.readFileSync(outputFile, 'utf8'))) {
 			continue;
 		}

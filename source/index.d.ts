@@ -223,11 +223,11 @@ export function expectTypeOf<Type>(): ExpectTypeOf<Type>;
 /**
 Assert that `value` causes a type error.
 
-It passes when there is at least one type error in its type argument or inside its parentheses, and fails with `Expected an error, but found none.` otherwise. Any error code counts, except an error for a name that does not exist or an unused `@ts-expect-error` directive, which are mistakes in the test. When a syntax error or an error in the compiler options made `tsc` skip the type check, no error counts.
+It passes when there is at least one type error in its type argument or parentheses, and fails with `Expected an error, but found none.` otherwise. Any error counts, except one for a name that does not exist or an unused `@ts-expect-error` directive, which are mistakes in the test. When `tsc` skipped the type check, no error counts.
 
-With a `message`, only an error whose message includes it passes the assertion, so a test cannot pass because of a different error. An error inside the call that does not include it is reported, so the failure shows what the error was. The message has to be one string literal, because it is read from the source. Anything else, like a variable, is not read, and the call then takes any error. Control characters in an unmatched message are displayed as visible `\uXXXX` escapes.
+With a `message`, only an error whose message includes it passes, so a test cannot pass because of a different error. Another error inside the call is reported, so the failure shows what it was. The message must be one string literal, because it is read from the source. Anything else, like a variable, is ignored, and the call then takes any error. Control characters in an unmatched message are shown as `\uXXXX` escapes.
 
-This needs the `nz` CLI, which matches type errors to the `expectError()` calls. The calls are found by name, so the `expectError` from `tsd` works too. With plain `tsc`, every type error fails, so use a `// @ts-expect-error` comment instead.
+This needs the `nz` CLI, which matches type errors to the calls. The calls are found by name, so `expectError` from `tsd` works too. With plain `tsc`, use a `// @ts-expect-error` comment instead.
 
 @param value - The expression that causes the type error.
 @param message - A part of the error message.
